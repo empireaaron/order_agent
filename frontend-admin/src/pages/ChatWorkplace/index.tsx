@@ -1,0 +1,471 @@
+import React, { useState, useEffect, useRef } from 'react'
+import { Card, Badge, Button, List, Avatar, Input, Tag, Empty, Spin, Modal } from 'antd'
+import { MessageOutlined, UserOutlined, CloseOutlined, TeamOutlined } from '@ant-design/icons'
+import { useAuthStore } from '../../stores/authStore'
+import api from '../../services/api'
+import './styles.css'
+
+interface ChatSession {
+  id: string
+  status: 'waiting' | 'connected' | 'closed'
+  customer: {
+    id: string
+    username: string
+  }
+  agent?: {
+    id: string
+    name: string
+  }
+  last_message?: string
+  unread_count: number
+  created_at: string
+}
+
+interface ChatMessage {
+  id: string
+  content: string
+  sender_type: 'customer' | 'agent' | 'system'
+  sender?: {
+    id: string
+    name: string
+  }
+  created_at: string
+}
+
+interface WaitingSession {
+  id: string
+  customer: {
+    id: string
+    username: string
+    email: string
+  }
+  request_type: string
+  initial_message: string
+  created_at: string
+  wait_time_seconds: number
+}
+
+const ChatWorkplace: React.FC = () => {
+  const { user } = useAuthStore()
+  const [online, setOnline] = useState(false)
+  const [sessions, setSessions] = useState<ChatSession[]>([])
+  const [waitingSessions, setWaitingSessions] = useState<WaitingSession[]>([])
+  const [waitingModalVisible, setWaitingModalVisible] = useState(false)
+  const [activeSession, setActiveSession] = useState<ChatSession | null>(null)
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [inputValue, setInputValue] = useState('')
+  const [loading, setLoading] = useState(false)
+  const wsRef = useRef<WebSocket | null>(null)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  // 使用 ref 存储 activeSession，避免 WebSocket 回调中的闭包问题
+  const activeSessionRef = useRef<ChatSession | null>(null)
+
+  // 同步 activeSession 到 ref
+  useEffect(() => {
+    activeSessionRef.current = activeSession
+  }, [activeSession])
+
+  // 建立WebSocket连接
+  useEffect(() => {
+    if (!online) {
+      if (wsRef.current) {
+        wsRef.current.close()
+      }
+      return
+    }
+
+    // 从 localStorage 获取 token（兼容直接存储和 zustand persist）
+    let token = localStorage.getItem('token')
+    if (!token) {
+      const authStorage = localStorage.getItem('auth-storage')
+      if (authStorage) {
+        try {
+          const parsed = JSON.parse(authStorage)
+          token = parsed.state?.token
+        } catch (e) {
+          console.error('Failed to parse auth-storage:', e)
+        }
+      }
+    }
+
+    if (!token) {
+      console.error('No token found for WebSocket connection')
+      return
+    }
+
+    const wsUrl = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/chat?token=${token}`
+    const ws = new WebSocket(wsUrl)
+    wsRef.current = ws
+
+    ws.onopen = () => {
+      console.log('Chat WebSocket connected')
+      fetchSessions()
+      fetchWaitingQueue()
+      // 每10秒刷新一次等待队列
+      const interval = setInterval(() => {
+        if (online) {
+          fetchWaitingQueue()
+        } else {
+          clearInterval(interval)
+        }
+      }, 10000)
+    }
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data)
+      console.log('WebSocket message received:', data)
+      handleWebSocketMessage(data)
+    }
+
+    ws.onerror = (error) => {
+      console.error('Chat WebSocket error:', error)
+    }
+
+    ws.onclose = () => {
+      console.log('Chat WebSocket closed')
+    }
+
+    return () => {
+      ws.close()
+    }
+  }, [online])
+
+  // 自动滚动到底部
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
+  const handleWebSocketMessage = (data: any) => {
+    console.log('WebSocket message received:', data)
+    // 使用 ref 获取最新的 activeSession，避免闭包问题
+    const currentActiveSession = activeSessionRef.current
+    console.log('Current active session:', currentActiveSession?.id, 'Message session:', data.session_id)
+
+    switch (data.type) {
+      case 'new_message':
+        if (data.session_id === currentActiveSession?.id) {
+          console.log('Adding message to current session')
+          setMessages(prev => [...prev, data.message])
+        } else {
+          console.log('Adding unread count to session:', data.session_id)
+          setSessions(prev => prev.map(s =>
+            s.id === data.session_id
+              ? { ...s, unread_count: s.unread_count + 1, last_message: data.message.content }
+              : s
+          ))
+        }
+        break
+      case 'new_waiting_session':
+        fetchWaitingQueue()
+        break
+      case 'session_assigned':
+        // 有新会话分配给自己，刷新会话列表
+        fetchSessions()
+        fetchWaitingQueue()
+        break
+      case 'session_closed':
+        // 会话被关闭，刷新会话列表
+        if (data.session_id === currentActiveSession?.id) {
+          setActiveSession(null)
+        }
+        fetchSessions()
+        break
+    }
+  }
+
+  const fetchSessions = async () => {
+    try {
+      const response = await api.get('/chat-service/sessions/my?status=connected')
+      setSessions(response.data)
+    } catch (error) {
+      console.error('Failed to fetch sessions:', error)
+    }
+  }
+
+  const fetchWaitingQueue = async () => {
+    try {
+      const response = await api.get('/chat-service/sessions/waiting')
+      console.log('Fetched waiting queue:', response.data)
+      setWaitingSessions(response.data)
+    } catch (error) {
+      console.error('Failed to fetch waiting queue:', error)
+    }
+  }
+
+  const goOnline = async () => {
+    try {
+      await api.post('/chat-service/agent/online')
+      setOnline(true)
+    } catch (error) {
+      console.error('Failed to go online:', error)
+    }
+  }
+
+  const goOffline = async () => {
+    try {
+      await api.post('/chat-service/agent/offline')
+      setOnline(false)
+      setActiveSession(null)
+    } catch (error) {
+      console.error('Failed to go offline:', error)
+    }
+  }
+
+  const acceptSession = async (sessionId: string) => {
+    try {
+      await api.post(`/chat-service/sessions/${sessionId}/accept`)
+
+      // 等待一下确保 WebSocket 连接正常
+      setTimeout(() => {
+        wsRef.current?.send(JSON.stringify({
+          type: 'join_session',
+          session_id: sessionId,
+          role: 'agent'
+        }))
+      }, 100)
+
+      // 获取会话详情并设置为活动会话
+      const response = await api.get(`/chat-service/sessions/my?status=connected`)
+      setSessions(response.data)
+
+      // 找到刚接入的会话并激活
+      const acceptedSession = response.data.find((s: ChatSession) => s.id === sessionId)
+      if (acceptedSession) {
+        setActiveSession(acceptedSession)
+        // 加载消息
+        const msgResponse = await api.get(`/chat-service/sessions/${sessionId}/messages`)
+        setMessages(msgResponse.data)
+      }
+
+      fetchWaitingQueue()
+      setWaitingModalVisible(false)
+    } catch (error) {
+      console.error('Failed to accept session:', error)
+    }
+  }
+
+  const loadSessionMessages = async (session: ChatSession) => {
+    setActiveSession(session)
+    setLoading(true)
+    try {
+      const response = await api.get(`/chat-service/sessions/${session.id}/messages`)
+      setMessages(response.data)
+      wsRef.current?.send(JSON.stringify({
+        type: 'join_session',
+        session_id: session.id,
+        role: 'agent'
+      }))
+    } catch (error) {
+      console.error('Failed to load messages:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const sendMessage = () => {
+    if (!inputValue.trim() || !activeSession) return
+
+    const content = inputValue.trim()
+
+    // 先本地显示自己发送的消息
+    const newMessage: ChatMessage = {
+      id: `temp-${Date.now()}`,
+      content: content,
+      sender_type: 'agent',
+      sender: {
+        id: user?.id || '',
+        name: user?.full_name || user?.username || '客服'
+      },
+      created_at: new Date().toISOString()
+    }
+    setMessages(prev => [...prev, newMessage])
+
+    wsRef.current?.send(JSON.stringify({
+      type: 'chat_message',
+      session_id: activeSession.id,
+      content: content
+    }))
+
+    setInputValue('')
+  }
+
+  const closeSession = async () => {
+    if (!activeSession) return
+    try {
+      await api.post(`/chat-service/sessions/${activeSession.id}/close`)
+      setActiveSession(null)
+      fetchSessions()
+    } catch (error) {
+      console.error('Failed to close session:', error)
+    }
+  }
+
+  const formatWaitTime = (seconds: number) => {
+    if (seconds < 60) return `${seconds}秒`
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}分钟`
+    return `${Math.floor(seconds / 3600)}小时${Math.floor((seconds % 3600) / 60)}分钟`
+  }
+
+  if (!online) {
+    return (
+      <div className="chat-offline">
+        <Card>
+          <Empty
+            description="您当前处于离线状态"
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+          >
+            <Button type="primary" onClick={goOnline}>
+              上线接单
+            </Button>
+          </Empty>
+        </Card>
+      </div>
+    )
+  }
+
+  return (
+    <div className="chat-workplace">
+      <div className="chat-sidebar">
+        <div className="chat-header">
+          <span>会话列表</span>
+          <div>
+            <Badge count={waitingSessions.length} style={{ marginRight: 16 }}>
+              <Button size="small" icon={<TeamOutlined />} onClick={() => {
+                fetchWaitingQueue()
+                setWaitingModalVisible(true)
+              }}>
+                等待队列
+              </Button>
+            </Badge>
+            <Button size="small" danger onClick={goOffline}>
+              下线
+            </Button>
+          </div>
+        </div>
+
+        <List
+          dataSource={sessions}
+          renderItem={item => (
+            <List.Item
+              className={`session-item ${activeSession?.id === item.id ? 'active' : ''}`}
+              onClick={() => loadSessionMessages(item)}
+            >
+              <List.Item.Meta
+                avatar={<Avatar icon={<UserOutlined />} />}
+                title={
+                  <span>
+                    {item.customer?.username || '未知客户'}
+                    {item.unread_count > 0 && (
+                      <Badge count={item.unread_count} style={{ marginLeft: 8 }} />
+                    )}
+                  </span>
+                }
+                description={item.last_message?.slice(0, 20) + '...' || '暂无消息'}
+              />
+            </List.Item>
+          )}
+        />
+      </div>
+
+      <div className="chat-main">
+        {activeSession ? (
+          <>
+            <div className="chat-main-header">
+              <span>{activeSession.customer?.username || '未知客户'}</span>
+              <Button
+                size="small"
+                danger
+                icon={<CloseOutlined />}
+                onClick={closeSession}
+              >
+                结束会话
+              </Button>
+            </div>
+
+            <div className="chat-messages">
+              {loading ? (
+                <Spin />
+              ) : (
+                messages.map(msg => (
+                  <div
+                    key={msg.id}
+                    className={`message ${msg.sender_type}`}
+                  >
+                    {msg.sender_type === 'system' ? (
+                      <Tag color="blue">{msg.content}</Tag>
+                    ) : (
+                      <div className="message-content">
+                        <div className="message-sender">
+                          {msg.sender?.name}
+                        </div>
+                        <div className="message-text">{msg.content}</div>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            <div className="chat-input">
+              <Input.TextArea
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onPressEnter={(e) => {
+                  if (!e.shiftKey) {
+                    e.preventDefault()
+                    sendMessage()
+                  }
+                }}
+                placeholder="输入消息..."
+                rows={3}
+              />
+              <Button type="primary" onClick={sendMessage}>
+                发送
+              </Button>
+            </div>
+          </>
+        ) : (
+          <Empty description="选择一个会话开始聊天" />
+        )}
+      </div>
+
+      {/* 等待队列弹窗 */}
+      <Modal
+        title="等待接入的客户"
+        open={waitingModalVisible}
+        onCancel={() => setWaitingModalVisible(false)}
+        footer={null}
+      >
+        <List
+          dataSource={waitingSessions}
+          renderItem={item => (
+            <List.Item
+              actions={[
+                <Button type="primary" size="small" onClick={() => acceptSession(item.id)}>
+                  接入
+                </Button>
+              ]}
+            >
+              <List.Item.Meta
+                avatar={<Avatar icon={<UserOutlined />} />}
+                title={item.customer.username}
+                description={
+                  <>
+                    <div>等待时长: {formatWaitTime(item.wait_time_seconds)}</div>
+                    <div style={{ color: '#999', fontSize: 12 }}>
+                      {item.initial_message?.slice(0, 50) || '无初始消息'}
+                    </div>
+                  </>
+                }
+              />
+            </List.Item>
+          )}
+          locale={{ emptyText: '暂无等待的客户' }}
+        />
+      </Modal>
+    </div>
+  )
+}
+
+export default ChatWorkplace

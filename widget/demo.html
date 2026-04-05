@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TicketBot AI智能客服演示</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #1890ff;
+        }
+        code {
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+        pre {
+            background: #f5f5f5;
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+        }
+        .demo-section {
+            background: #f9f9f9;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .feature-list {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin: 15px 0;
+        }
+        .feature-item {
+            background: #fff;
+            padding: 10px 15px;
+            border-radius: 4px;
+            border-left: 3px solid #1890ff;
+        }
+        .test-cases {
+            background: #fff;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 15px;
+        }
+        .test-case {
+            padding: 8px 12px;
+            margin: 5px 0;
+            background: #f0f5ff;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .test-case:hover {
+            background: #d6e4ff;
+        }
+        .test-case-label {
+            font-size: 12px;
+            color: #666;
+            margin-right: 8px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🤖 TicketBot AI智能客服演示</h1>
+
+    <div class="demo-section">
+        <h2>关于</h2>
+        <p>这是一个基于 LangGraph + LLM 的智能客服系统演示。点击右下角的 💬 聊天按钮开始对话。</p>
+
+        <div class="feature-list">
+            <div class="feature-item">🔍 意图识别 - 自动理解用户需求</div>
+            <div class="feature-item">📋 智能工单 - 自动提取标题、优先级、分类</div>
+            <div class="feature-item">💡 知识库问答 - RAG检索增强</div>
+            <div class="feature-item">📊 工单统计 - 实时数据查询</div>
+        </div>
+    </div>
+
+    <div class="demo-section">
+        <h2>测试用例</h2>
+        <p>点击以下测试语句快速体验，或在聊天框中输入：</p>
+        <div class="test-cases">
+            <div class="test-case" onclick="copyToChat('我的订单无法支付，一直显示错误')">
+                <span class="test-case-label">[创建工单]</span>我的订单无法支付，一直显示错误
+            </div>
+            <div class="test-case" onclick="copyToChat('查询我的工单状态')">
+                <span class="test-case-label">[查询工单]</span>查询我的工单状态
+            </div>
+            <div class="test-case" onclick="copyToChat('我的工单统计')">
+                <span class="test-case-label">[统计]</span>我的工单统计
+            </div>
+            <div class="test-case" onclick="copyToChat('如何使用退货功能')">
+                <span class="test-case-label">[知识库]</span>如何使用退货功能
+            </div>
+            <div class="test-case" onclick="copyToChat('你好')">
+                <span class="test-case-label">[通用]</span>你好
+            </div>
+        </div>
+    </div>
+
+    <div class="demo-section">
+        <h2>使用方法</h2>
+        <p>在您的网站中嵌入以下代码：</p>
+        <pre><code>&lt;script src="ticket-widget.js" defer&gt;&lt;/script&gt;
+&lt;script&gt;
+  TicketWidget.init({
+    apiUrl: 'http://localhost:8000/api/v1',
+    websocketUrl: 'ws://localhost:8000/ws',
+    theme: 'blue',
+    showBubble: true
+  });
+&lt;/script&gt;</code></pre>
+    </div>
+
+    <!-- 嵌入 Widget -->
+    <script src="ticket-widget.js" defer></script>
+    <script>
+        // 初始化 Widget
+        document.addEventListener('DOMContentLoaded', function() {
+            TicketWidget.init({
+                apiUrl: 'http://localhost:8001/api/v1',
+                websocketUrl: 'ws://localhost:8001/ws',
+                theme: 'blue',
+                showBubble: true,
+                title: 'AI智能客服',
+                welcomeMessage: '您好！我是AI智能客服助手 🤖\n\n我可以帮您：\n• 📋 创建工单 - 描述遇到的问题\n• 🔍 查询工单 - 了解处理进度\n• 💡 解答问题 - 基于知识库回答\n• 📊 查看统计 - 工单概况\n\n请直接输入您的问题~'
+            });
+        });
+
+        // 复制测试用例到聊天框
+        function copyToChat(text) {
+            const bubble = document.getElementById('ticket-widget-bubble');
+            const windowEl = document.getElementById('ticket-widget-window');
+
+            // 打开聊天窗口
+            if (!windowEl.classList.contains('open')) {
+                bubble.click();
+            }
+
+            // 等待窗口打开后填入文本
+            setTimeout(function() {
+                const input = document.getElementById('ticket-widget-input');
+                if (input) {
+                    input.value = text;
+                    input.focus();
+                }
+            }, 300);
+        }
+    </script>
+</body>
+</html>

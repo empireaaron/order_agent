@@ -1,0 +1,48 @@
+# FastAPI & Server
+fastapi
+uvicorn[standard]
+python-multipart
+python-dotenv
+
+# Database
+sqlalchemy
+pymysql
+alembic
+
+# LangChain & LangGraph
+langchain
+langchain-openai
+langchain-community
+langgraph
+langchain-text-splitters
+docx2txt
+unstructured
+
+# AI/LLM SDK (选择一个主要的，这里用 OpenAI)
+openai
+dashscope
+
+# Vector Database
+pymilvus
+
+# Embeddings (使用 HuggingFace 本地模型，无需 API)
+sentence-transformers
+
+# Document Processing
+python-docx
+pypdf
+
+# Auth
+python-jose[cryptography]
+passlib[bcrypt]
+
+# Pydantic & Validation
+pydantic
+pydantic-settings
+
+# HTTP Client (LangChain 需要)
+httpx
+
+# Utils
+tenacity
+email-validator
