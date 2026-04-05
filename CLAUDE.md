@@ -1,101 +1,101 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+本文档为 Claude Code (claude.ai/code) 提供本代码库的工作指导。
 
-## Architecture Overview
+## 架构概述
 
-TicketBot is a smart customer service ticket system with three main components:
+TicketBot 是一个智能客服工单系统，包含三个主要组件：
 
-1. **Backend** (`backend/`) - FastAPI with LangChain/LangGraph AI agents
-2. **Frontend Admin** (`frontend-admin/`) - React + TypeScript + Ant Design for agents/admins
-3. **Widget** (`widget/`) - Vanilla JS embeddable chat widget for customers
+1. **后端** (`backend/`) - FastAPI + LangChain/LangGraph AI 智能体
+2. **前端管理后台** (`frontend-admin/`) - React + TypeScript + Ant Design，供客服/管理员使用
+3. **嵌入式组件** (`widget/`) - Vanilla JS 聊天挂件，供网站客户使用
 
-### AI Agent Workflow (LangGraph)
+### AI 智能体工作流 (LangGraph)
 
-The AI agent (`backend/agents/`) processes user input through intent analysis:
+AI 智能体 (`backend/agents/`) 通过意图分析处理用户输入：
 
 ```
-User Input → analyze_intent → Route to:
-  ├─ create_ticket → MySQL insert
-  ├─ query_ticket → MySQL query
-  ├─ process_ticket → Update ticket status
-  ├─ transfer_to_agent → Create chat session
-  ├─ summary → Statistics query
-  └─ general → query_knowledge (Milvus) → Return results
+用户输入 → 分析意图 → 路由到：
+  ├─ 创建工单 → MySQL 插入
+  ├─ 查询工单 → MySQL 查询
+  ├─ 处理工单 → 更新工单状态
+  ├─ 转人工 → 创建聊天会话
+  ├─ 统计摘要 → 统计数据查询
+  └─ 一般咨询 → 查询知识库 (Milvus) → 返回结果
 ```
 
-### Real-time Chat System
+### 实时聊天系统
 
-WebSocket dual endpoints:
-- `/ws` - General notifications (system broadcasts)
-- `/ws/chat` - Real-time chat messages (customers ↔ agents)
+WebSocket 双端点设计：
+- `/ws` - 系统通知广播
+- `/ws/chat` - 客户与客服实时聊天
 
-Transfer to human flow:
-1. Customer clicks "转人工" in Widget or AI routes to transfer
-2. API creates chat session (`backend/api/v1/chat_service.py`)
-3. If agents online: auto-assign or queue
-4. WebSocket connection established for real-time messaging
-5. Agent uses "Chat Workplace" (`frontend-admin/src/pages/ChatWorkplace/`) to handle sessions
+转人工流程：
+1. 客户在挂件中点击"转人工"或 AI 路由到人工
+2. API 创建聊天会话 (`backend/api/v1/chat_service.py`)
+3. 如有在线客服：自动分配或进入排队队列
+4. 建立 WebSocket 连接进行实时消息收发
+5. 客服在"聊天工作台" (`frontend-admin/src/pages/ChatWorkplace/`) 处理会话
 
-### Key Directories
+### 关键目录
 
-- `backend/agents/` - LangGraph nodes and state
-- `backend/api/v1/` - REST API routes
-- `backend/models/` - SQLAlchemy models (user, ticket, knowledge_base, chat)
-- `backend/websocket/` - WebSocket managers (general + chat)
-- `frontend-admin/src/stores/` - Zustand state management
-- `frontend-admin/src/services/` - API client
-- `widget/ticket-widget.js` - Embeddable widget (~1000 lines, Shadow DOM)
+- `backend/agents/` - LangGraph 节点和状态定义
+- `backend/api/v1/` - REST API 路由
+- `backend/models/` - SQLAlchemy 模型（用户、工单、知识库、聊天）
+- `backend/websocket/` - WebSocket 管理器（通用 + 聊天）
+- `frontend-admin/src/stores/` - Zustand 状态管理
+- `frontend-admin/src/services/` - API 客户端
+- `widget/ticket-widget.js` - 可嵌入挂件（约1000行，Shadow DOM 隔离样式）
 
-## Common Commands
+## 常用命令
 
 ```bash
-# Initialize database
+# 初始化数据库
 python manage.py init-db
 
-# Start backend (port 8000 via manage.py, but use 8001 for uvicorn directly)
+# 启动后端（manage.py 使用 8000 端口，直接使用 uvicorn 用 8001）
 python manage.py run-backend
-# OR: cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8001
+# 或：cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8001
 
-# Start frontend (port 5173)
+# 启动前端（端口 5173）
 python manage.py run-frontend
-# OR: cd frontend-admin && npm run dev
+# 或：cd frontend-admin && npm run dev
 
-# Frontend linting
+# 前端代码检查
 cd frontend-admin && npm run lint
 
-# Docker dependencies (MySQL, Milvus, MinIO)
+# Docker 启动依赖服务（MySQL、Milvus、MinIO）
 docker-compose up -d mysql milvus minio
 
-# All services via Docker
+# Docker 启动所有服务
 docker-compose up -d
 ```
 
-## Port Configuration
+## 端口配置
 
-| Service | Port | Notes |
-|---------|------|-------|
-| Backend | 8001 | API + WebSocket |
-| Frontend | 5173 | Vite dev server |
-| MySQL | 3306 | |
-| Milvus | 19530 | Vector DB for knowledge search |
-| MinIO API | 9000 | File storage |
-| MinIO Console | 9001 | |
+| 服务 | 端口 | 说明 |
+|------|------|------|
+| 后端 API | 8001 | API + WebSocket |
+| 前端开发 | 5173 | Vite 开发服务器 |
+| MySQL | 3306 | 主数据库 |
+| Milvus | 19530 | 向量数据库，用于知识库语义搜索 |
+| MinIO API | 9000 | 文件存储 |
+| MinIO 控制台 | 9001 | 文件管理界面 |
 
-## Key Concepts
+## 核心概念
 
-**Multi-role RBAC**: JWT tokens with roles (admin, agent, operations, user). Check `backend/auth/dependencies.py` for `require_role()`.
+**多角色权限控制**：JWT Token 认证，角色包括管理员、客服、运营、普通用户。权限检查见 `backend/auth/dependencies.py` 中的 `require_role()`。
 
-**Knowledge Base**: Documents uploaded to MinIO, parsed into chunks, embedded via OpenAI/DashScope, stored in Milvus for semantic search.
+**知识库处理**：文档上传到 MinIO，解析分块后通过 OpenAI/DashScope 生成向量，存储在 Milvus 中用于语义检索。
 
-**Widget Session Persistence**: Widget stores `session_id` and `token` in localStorage for automatic reconnection on page refresh.
+**挂件会话持久化**：Widget 将 `session_id` 和 `token` 保存在 localStorage 中，页面刷新后自动重连恢复会话。
 
-**Agent Status**: Agents toggle online/offline via `POST /api/v1/agent/online`. Only online agents receive new session assignments.
+**客服状态管理**：客服通过 `POST /api/v1/agent/online` 切换在线/离线状态，只有在线客服才会被分配新会话。
 
-## VS Code Debugging
+## VS Code 调试
 
-Press `F5` and select "Run Backend" or "Run Frontend". Configurations are in `.vscode/launch.json`.
+按 `F5` 选择 "Run Backend" 或 "Run Frontend" 启动调试。配置位于 `.vscode/launch.json`。
 
-## Python Path
+## Python 路径
 
-The backend uses `PYTHONPATH=./backend`. `manage.py` automatically adds this, or VS Code launch configurations handle it.
+后端代码使用 `PYTHONPATH=./backend`。`manage.py` 会自动添加此路径，VS Code 启动配置也已处理。
