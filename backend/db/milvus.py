@@ -137,16 +137,17 @@ class MilvusManager:
             return False
 
 
-    def search(self, collection_name: str, vector: list, limit: int = 5) -> list:
+    def search(self, collection_name: str, vector: list, limit: int = 5, score_threshold: float = 0.0) -> list:
         """搜索相似向量
 
         Args:
             collection_name: 集合名称
             vector: 查询向量
             limit: 返回数量
+            score_threshold: 相似度分数阈值（0-1之间），低于此值的结果会被过滤
 
         Returns:
-            搜索结果列表
+            搜索结果列表，每个结果包含 id, distance, metadata
         """
         if not self.client:
             self.connect()
@@ -158,7 +159,30 @@ class MilvusManager:
                 limit=limit,
                 output_fields=["metadata"]
             )
-            return results[0] if results else []
+
+            if not results or not results[0]:
+                return []
+
+            # 过滤低于阈值的结果
+            filtered_results = []
+            for result in results[0]:
+                # Milvus 返回的距离分数，范围通常是 [0, 2] 或 [-1, 1]，取决于 metric_type
+                # 对于 cosine 相似度，需要转换为 [0, 1] 范围
+                distance = result.get('distance', 0)
+
+                # 如果是 cosine 相似度，转换为 0-1 范围
+                # Milvus 的 cosine 距离 = 1 - cosine_similarity
+                # 所以 similarity = 1 - distance
+                if distance <= 1.0:  # 假设是 cosine 距离
+                    similarity = 1 - distance
+                else:  # 可能是 L2 距离，需要归一化
+                    similarity = 1 / (1 + distance)
+
+                if similarity >= score_threshold:
+                    result['similarity'] = similarity
+                    filtered_results.append(result)
+
+            return filtered_results
         except Exception as e:
             print(f"搜索失败: {e}")
             return []

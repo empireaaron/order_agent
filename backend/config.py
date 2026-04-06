@@ -87,6 +87,13 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = Field(default="documents")
     MINIO_SECURE: bool = Field(default=False)
 
+    # Redis 配置
+    REDIS_HOST: str = Field(default="localhost")
+    REDIS_PORT: int = Field(default=6379)
+    REDIS_DB: int = Field(default=0)
+    REDIS_PASSWORD: str = Field(default="")
+    REDIS_ENABLED: bool = Field(default=False)  # 是否启用 Redis
+
     @property
     def llm(self):
         """获取 LLM 实例"""

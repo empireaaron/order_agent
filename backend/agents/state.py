@@ -23,6 +23,9 @@ class AgentState(TypedDict):
     # 客户信息
     customer_info: Annotated[dict, "客户相关信息"]
 
+    # 用户画像（长期记忆）
+    user_profile: Annotated[dict, "用户画像信息，包含历史工单、统计等"]
+
     # 知识库检索结果
     knowledge_results: Annotated[list, "从知识库检索的结果"]
 

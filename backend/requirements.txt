@@ -46,3 +46,6 @@ httpx
 # Utils
 tenacity
 email-validator
+
+# Cache & Storage (Optional)
+redis  # 用于分布式对话记忆存储，可选依赖

@@ -57,7 +57,8 @@ def generate_embedding(text: str) -> List[float]:
 def retrieve_from_knowledge_base(
     question: str,
     collection_name: str,
-    top_k: int = 5
+    top_k: int = 5,
+    similarity_threshold: float = 0.0
 ) -> List[Dict[str, Any]]:
     """
     从知识库检索相关信息
@@ -66,6 +67,7 @@ def retrieve_from_knowledge_base(
         question: 用户问题
         collection_name: Milvus collection 名称
         top_k: 返回_top_k_条结果
+        similarity_threshold: 相似度阈值，低于此值的结果会被过滤
 
     Returns:
         检索结果列表
@@ -77,7 +79,8 @@ def retrieve_from_knowledge_base(
     results = milvus_manager.search(
         collection_name=collection_name,
         vector=query_vector,
-        limit=top_k
+        limit=top_k,
+        score_threshold=similarity_threshold
     )
 
     return results
@@ -150,8 +153,9 @@ def insert_document_to_kb(
 def search_kb(
     question: str,
     collection_name: str,
-    top_k: int = 3
-) -> str:
+    top_k: int = 3,
+    similarity_threshold: float = 0.6
+) -> tuple[str, list]:
     """
     在知识库中搜索答案并返回上下文
 
@@ -159,23 +163,37 @@ def search_kb(
         question: 用户问题
         collection_name: 集合名称
         top_k: 相关块数量
+        similarity_threshold: 相似度阈值，低于此值的结果会被过滤（0-1之间）
 
     Returns:
-        检索到的上下文文本
+        (检索到的上下文文本, 原始结果列表)
     """
     results = retrieve_from_knowledge_base(
         question=question,
         collection_name=collection_name,
-        top_k=top_k
+        top_k=top_k,
+        similarity_threshold=similarity_threshold
     )
 
     if not results:
-        return ""
+        return "", []
 
-    # 提取并拼接结果
-    context = "\n\n".join([
-        r.get("metadata", {}).get("content", "")
-        for r in results
-    ])
+    # 按相似度排序（降序）
+    results = sorted(results, key=lambda x: x.get('similarity', 0), reverse=True)
 
-    return context
+    # 提取内容，添加相似度信息用于调试
+    context_parts = []
+    for r in results:
+        content = r.get("metadata", {}).get("content", "")
+        similarity = r.get('similarity', 0)
+        if content:
+            context_parts.append(content)
+            print(f"[DEBUG] 知识库结果 [相似度: {similarity:.3f}]: {content[:80]}...")
+
+    # 拼接结果，限制总长度（避免超出 LLM 上下文）
+    MAX_CONTEXT_LENGTH = 2000  # 最大上下文长度
+    context = "\n\n".join(context_parts)
+    if len(context) > MAX_CONTEXT_LENGTH:
+        context = context[:MAX_CONTEXT_LENGTH] + "\n...[内容已截断]"
+
+    return context, results

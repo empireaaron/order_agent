@@ -54,6 +54,9 @@ milvus_data/
 # MinIO data (if running locally)
 minio_data/
 
+# Redis data (if running locally)
+redis_data/
+
 # Test coverage
 htmlcov/
 .coverage

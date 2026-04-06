@@ -52,6 +52,16 @@ services:
     networks:
       - ticket_network
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ticket_network
+    command: redis-server --appendonly yes
+
   backend:
     build: ./backend
     environment:
@@ -62,6 +72,9 @@ services:
       - MYSQL_DATABASE=ticket_bot
       - MILVUS_HOST=milvus
       - MILVUS_PORT=19530
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_ENABLED=true
       - JWT_SECRET_KEY=your-secret-key-change-in-production
     ports:
       - "8000:8000"
@@ -70,6 +83,7 @@ services:
     depends_on:
       - mysql
       - milvus
+      - redis
     networks:
       - ticket_network
 
@@ -86,6 +100,7 @@ volumes:
   mysql_data:
   etcd_data:
   minio_data:
+  redis_data:
 
 networks:
   ticket_network:

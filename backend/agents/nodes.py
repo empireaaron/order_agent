@@ -311,9 +311,21 @@ def query_ticket_node(state: AgentState) -> AgentState:
 
 
 def query_knowledge_node(state: AgentState) -> AgentState:
-    """查询知识库节点 - 仅查询知识库，不创建工单"""
+    """查询知识库节点 - 仅查询知识库，不创建工单，支持多轮对话记忆"""
     user_input = state["input"]
     customer_info = state.get("customer_info", {})
+    messages = state.get("messages", [])
+
+    # 构建对话历史上下文
+    conversation_history = ""
+    if messages:
+        history_parts = []
+        for msg in messages[-4:]:  # 最近4条消息
+            if hasattr(msg, 'type') and hasattr(msg, 'content'):
+                role = "用户" if msg.type == "human" else "AI"
+                history_parts.append(f"{role}: {msg.content}")
+        if history_parts:
+            conversation_history = "\n".join(history_parts)
 
     db = next(get_db())
     try:
@@ -335,47 +347,108 @@ def query_knowledge_node(state: AgentState) -> AgentState:
             print(f"[DEBUG] 查询知识库: customer_id={customer_id}, 找到 {len(kb_list)} 个知识库")
 
             if kb_list:
-                # 2. 从知识库中检索相关内容
+                # 2. 从知识库中检索相关内容（带相似度过滤）
                 from tools.milvus_tools import search_kb
-                all_results = []
+                all_raw_results = []  # 存储所有原始结果（带相似度）
+
                 for kb in kb_list:
                     try:
                         print(f"[DEBUG] 搜索知识库: {kb.name} (collection: {kb.collection_name})")
-                        results = search_kb(
+                        context, raw_results = search_kb(
                             question=user_input,
                             collection_name=kb.collection_name,
-                            top_k=3
+                            top_k=3,
+                            similarity_threshold=0.5  # 相似度阈值 0.5
                         )
-                        if results:
-                            all_results.append(results)
-                            print(f"[DEBUG] 知识库 {kb.name} 返回结果数: {len(results) if isinstance(results, list) else 1}")
+                        if raw_results:
+                            # 添加知识库名称到结果中，方便调试
+                            for r in raw_results:
+                                r['kb_name'] = kb.name
+                            all_raw_results.extend(raw_results)
+                            print(f"[DEBUG] 知识库 {kb.name} 返回 {len(raw_results)} 条有效结果")
                     except Exception as e:
                         print(f"搜索知识库 {kb.collection_name} 失败: {e}")
 
-                kb_search_info["results_count"] = len(all_results)
+                # 3. 全局排序：按相似度降序排列
+                if all_raw_results:
+                    all_raw_results = sorted(
+                        all_raw_results,
+                        key=lambda x: x.get('similarity', 0),
+                        reverse=True
+                    )
 
-                if all_results:
-                    kb_context = "\n\n".join(all_results)
-                    print(f"[DEBUG] 知识库查询成功，共 {len(all_results)} 条匹配结果")
+                    # 只取前 5 条最相关的结果
+                    top_results = all_raw_results[:5]
+                    kb_search_info["results_count"] = len(top_results)
+
+                    # 提取内容并拼接
+                    context_parts = []
+                    total_length = 0
+                    MAX_TOTAL_LENGTH = 4000  # 最大总长度
+
+                    for r in top_results:
+                        content = r.get("metadata", {}).get("content", "")
+                        similarity = r.get('similarity', 0)
+                        kb_name = r.get('kb_name', 'unknown')
+
+                        if content:
+                            # 检查是否超出长度限制
+                            if total_length + len(content) > MAX_TOTAL_LENGTH:
+                                # 截断最后一条
+                                remaining = MAX_TOTAL_LENGTH - total_length
+                                if remaining > 100:  # 至少保留 100 字符才有意义
+                                    content = content[:remaining] + "...[截断]"
+                                else:
+                                    break
+
+                            context_parts.append(content)
+                            total_length += len(content)
+                            print(f"[DEBUG] [{kb_name}] 相似度: {similarity:.3f} | 内容: {content[:60]}...")
+
+                    if context_parts:
+                        kb_context = "\n\n".join(context_parts)
+                        print(f"[DEBUG] 知识库查询成功，共 {len(context_parts)} 条匹配结果，总长度 {total_length} 字符")
+                    else:
+                        print(f"[DEBUG] 知识库查询完成，但无有效内容")
                 else:
                     print(f"[DEBUG] 知识库查询完成，无匹配结果")
 
         # 3. 使用 LLM 生成回答
         if kb_context:
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", """你是一个专业的客服助手。请根据知识库内容回答用户问题。
+            # 构建带历史上下文的 prompt
+            if conversation_history:
+                prompt = ChatPromptTemplate.from_messages([
+                    ("system", """你是一个专业的客服助手。请根据知识库内容和对话历史回答用户问题。
+
+对话历史：
+{history}
+
+知识库内容：
+{knowledge}
+
+请根据以上信息回答用户的最新问题。如果知识库中没有相关信息，请礼貌地告知用户您无法回答该问题，并建议创建工单以便人工处理。"""),
+                    ("human", "{input}")
+                ])
+                chain = prompt | settings.llm
+                response = chain.invoke({
+                    "input": user_input,
+                    "knowledge": kb_context,
+                    "history": conversation_history
+                })
+            else:
+                prompt = ChatPromptTemplate.from_messages([
+                    ("system", """你是一个专业的客服助手。请根据知识库内容回答用户问题。
 如果知识库中没有相关信息，请礼貌地告知用户您无法回答该问题，并建议创建工单以便人工处理。
 
 知识库内容：
 {knowledge}"""),
-                ("human", "{input}")
-            ])
-
-            chain = prompt | settings.llm
-            response = chain.invoke({
-                "input": user_input,
-                "knowledge": kb_context
-            })
+                    ("human", "{input}")
+                ])
+                chain = prompt | settings.llm
+                response = chain.invoke({
+                    "input": user_input,
+                    "knowledge": kb_context
+                })
 
             return {
                 **state,
@@ -763,40 +836,98 @@ def summary_node(state: AgentState) -> AgentState:
 
 
 def general_node(state: AgentState) -> AgentState:
-    """通用回答节点 - 智能对话回复"""
+    """通用回答节点 - 智能对话回复，支持多轮对话记忆和用户画像"""
     user_input = state["input"]
     messages = state.get("messages", [])
+    user_profile = state.get("user_profile", {})
 
-    # 构建对话上下文
-    recent_messages = messages[-5:] if len(messages) > 5 else messages
+    # 构建对话历史文本
+    conversation_history = ""
+    if messages:
+        history_parts = []
+        for msg in messages[-6:]:  # 最近6条消息
+            if hasattr(msg, 'type') and hasattr(msg, 'content'):
+                role = "用户" if msg.type == "human" else "AI"
+                history_parts.append(f"{role}: {msg.content}")
+        if history_parts:
+            conversation_history = "\n".join(history_parts)
 
-    # 使用 LLM 生成友好回复
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", """你是一个友好的客服助手。根据用户输入和对话历史，提供有帮助的回复。
+    # 构建用户画像提示
+    profile_prompt = ""
+    if user_profile:
+        stats = user_profile.get('ticket_stats', {})
+        total = stats.get('total', 0)
+        open_count = stats.get('open', 0) + stats.get('in_progress', 0)
+
+        profile_parts = []
+        profile_parts.append(f"用户: {user_profile.get('full_name') or user_profile.get('username')}")
+        if total > 0:
+            profile_parts.append(f"历史工单: {total}个")
+        if open_count > 0:
+            profile_parts.append(f"当前有{open_count}个处理中的工单")
+
+        # 最近工单提醒
+        recent_tickets = user_profile.get('recent_tickets', [])
+        if recent_tickets:
+            latest = recent_tickets[0]
+            profile_parts.append(f"最近工单: {latest['ticket_no']} - {latest['title']}")
+
+        if profile_parts:
+            profile_prompt = "\n".join(profile_parts)
+
+    # 使用 LLM 生成友好回复，带上历史上下文和用户画像
+    if conversation_history:
+        # 构建完整的 system prompt，包含用户画像
+        system_content = """你是一个友好的客服助手。请根据对话历史、用户画像和用户的最新输入，提供有帮助的回复。"""
+
+        if profile_prompt:
+            system_content += f"\n\n【用户画像】\n{profile_prompt}"
+
+        system_content += """\n\n【对话历史】
+{history}
 
 你可以帮助用户：
 1. 创建工单 - 当用户描述问题或故障时
 2. 查询工单 - 当用户提供工单号或询问工单状态时
 3. 查看统计 - 当用户想了解工单概况时
 
-请用友好、专业的语气回复。如果用户的问题不清楚，请礼貌地询问更多细节。"""),
-        ("human", "用户输入: {input}")
-    ])
+请用友好、专业的语气回复，注意保持对话的连贯性。如果用户有正在处理的工单，可以主动询问是否需要跟进。"""
 
-    try:
-        chain = prompt | settings.llm
-        response = chain.invoke({"input": user_input})
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_content),
+            ("human", "{input}")
+        ])
+        try:
+            chain = prompt | settings.llm
+            response = chain.invoke({"input": user_input, "history": conversation_history})
+        except Exception as e:
+            response = type('obj', (object,), {'content': f"您好！有什么可以帮您的吗？（历史对话加载失败）"})()
+    else:
+        # 没有历史对话，使用简化prompt
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """你是一个友好的客服助手。
 
-        return {
-            **state,
-            "response": response.content
-        }
-    except Exception as e:
-        # 降级处理 - 使用固定模板回复
-        return {
-            **state,
-            "response": f"您好！我是您的智能客服助手。\n\n我可以帮您：\n• 📋 创建新工单 - 描述您遇到的问题\n• 🔍 查询工单 - 提供工单编号查询进度\n• 📊 查看统计 - 了解您的工单概况\n\n请问有什么可以帮您的吗？"
-        }
+你可以帮助用户：
+1. 创建工单 - 当用户描述问题或故障时
+2. 查询工单 - 当用户提供工单号或询问工单状态时
+3. 查看统计 - 当用户想了解工单概况时
+
+请用友好、专业的语气回复。"""),
+            ("human", "{input}")
+        ])
+        try:
+            chain = prompt | settings.llm
+            response = chain.invoke({"input": user_input})
+        except Exception as e:
+            return {
+                **state,
+                "response": f"您好！我是您的智能客服助手。\n\n我可以帮您：\n• 📋 创建新工单 - 描述您遇到的问题\n• 🔍 查询工单 - 提供工单编号查询进度\n• 📊 查看统计 - 了解您的工单概况\n\n请问有什么可以帮您的吗？"
+            }
+
+    return {
+        **state,
+        "response": response.content
+    }
 
 
 def route_intent(state: AgentState) -> str:
