@@ -319,16 +319,29 @@ def query_knowledge_node(state: AgentState) -> AgentState:
     customer_info = state.get("customer_info", {})
     messages = state.get("messages", [])
 
-    # 构建对话历史上下文
+    # 构建对话历史上下文（限制长度，防止超出LLM上下文）
     conversation_history = ""
+    MAX_HISTORY_LENGTH = 1500  # 历史消息最大长度
     if messages:
         history_parts = []
-        for msg in messages[-4:]:  # 最近4条消息
+        current_length = 0
+        # 最近3轮对话（6条消息），从旧到新
+        for msg in messages[-6:]:
             if hasattr(msg, 'type') and hasattr(msg, 'content'):
                 role = "用户" if msg.type == "human" else "AI"
-                history_parts.append(f"{role}: {msg.content}")
+                content = msg.content
+                # 单条消息截断
+                if len(content) > 300:
+                    content = content[:300] + "...[截断]"
+                msg_text = f"{role}: {content}"
+                # 检查总长度
+                if current_length + len(msg_text) > MAX_HISTORY_LENGTH:
+                    break
+                history_parts.append(msg_text)
+                current_length += len(msg_text) + 1  # +1 for newline
         if history_parts:
             conversation_history = "\n".join(history_parts)
+            logger.debug(f"Conversation history: {len(conversation_history)} chars")
 
     try:
         with get_db_context() as db:
@@ -338,110 +351,103 @@ def query_knowledge_node(state: AgentState) -> AgentState:
             kb_context = ""
             kb_search_info = {"searched": False, "kb_count": 0, "results_count": 0}
 
-            if customer_id:
-                # 查询所有活跃的知识库（知识库应该是全局共享的，不只是客户自己的）
-                kb_list = db.query(KnowledgeBase).filter(
-                    KnowledgeBase.status == "active"
-                ).all()
+            # 查询所有活跃的知识库（知识库全局共享，不需要登录）
+            kb_list = db.query(KnowledgeBase).filter(
+                KnowledgeBase.status == "active"
+            ).all()
 
-                kb_search_info["searched"] = True
-                kb_search_info["kb_count"] = len(kb_list)
-                logger.debug(f"Found {len(kb_list)} knowledge bases")
+            kb_search_info["searched"] = True
+            kb_search_info["kb_count"] = len(kb_list)
+            logger.debug(f"Found {len(kb_list)} knowledge bases")
 
-                if kb_list:
-                    # 2. 从知识库中检索相关内容（带相似度过滤）
-                    # 优化：预计算 embedding + 并行查询
-                    from tools.milvus_tools import generate_embedding, search_kb_batch
+            if kb_list:
+                # 2. 从知识库中检索相关内容（带相似度过滤）
+                # 优化：预计算 embedding + 并行查询
+                from tools.milvus_tools import generate_embedding, search_kb_batch
 
-                    # 2.1 只生成一次 embedding
-                    query_vector = generate_embedding(user_input)
+                # 2.1 只生成一次 embedding
+                query_vector = generate_embedding(user_input)
 
-                    # 2.2 并行搜索所有知识库
-                    all_raw_results = search_kb_batch(
-                        query_vector=query_vector,
-                        knowledge_bases=kb_list,
-                        top_k=3,
-                        similarity_threshold=0.5
+                # 2.2 并行搜索所有知识库
+                all_raw_results = search_kb_batch(
+                    query_vector=query_vector,
+                    knowledge_bases=kb_list,
+                    top_k=10,
+                    similarity_threshold=0.3
+                )
+                logger.debug(f"Knowledge base search returned {len(all_raw_results)} results")
+                for x in all_raw_results:
+                    '''打印搜素到的内容'''
+                    logger.debug(f"-------------------------------------")
+                    logger.debug(f"KB: {x.get('kb_name', 'unknown')} | Similarity: {x.get('similarity', 0)} | Content: {x.get('metadata', {}).get('content', '')}")
+                # 3. 全局排序：按相似度降序排列
+                if all_raw_results:
+                    all_raw_results = sorted(
+                        all_raw_results,
+                        key=lambda x: x.get('similarity', 0),
+                        reverse=True
                     )
-                    logger.debug(f"Knowledge base search returned {len(all_raw_results)} results")
 
-                    # 3. 全局排序：按相似度降序排列
-                    if all_raw_results:
-                        all_raw_results = sorted(
-                            all_raw_results,
-                            key=lambda x: x.get('similarity', 0),
-                            reverse=True
-                        )
+                    # 只取前 8 条最相关的结果
+                    top_results = all_raw_results[:8]
+                    kb_search_info["results_count"] = len(top_results)
 
-                        # 只取前 5 条最相关的结果
-                        top_results = all_raw_results[:5]
-                        kb_search_info["results_count"] = len(top_results)
+                    # 提取内容并拼接（限制长度，与历史消息一起不超过LLM上下文）
+                    context_parts = []
+                    total_length = 0
+                    MAX_TOTAL_LENGTH = 3000  # 知识库内容最大长度（与MAX_HISTORY_LENGTH合计约4500字符）
 
-                        # 提取内容并拼接
-                        context_parts = []
-                        total_length = 0
-                        MAX_TOTAL_LENGTH = 4000  # 最大总长度
+                    for r in top_results:
+                        content = r.get("metadata", {}).get("content", "")
+                        similarity = r.get('similarity', 0)
+                        kb_name = r.get('kb_name', 'unknown')
 
-                        for r in top_results:
-                            content = r.get("metadata", {}).get("content", "")
-                            similarity = r.get('similarity', 0)
-                            kb_name = r.get('kb_name', 'unknown')
+                        if content:
+                            # 检查是否超出长度限制
+                            if total_length + len(content) > MAX_TOTAL_LENGTH:
+                                # 截断最后一条
+                                remaining = MAX_TOTAL_LENGTH - total_length
+                                if remaining > 100:  # 至少保留 100 字符才有意义
+                                    content = content[:remaining] + "...[截断]"
+                                else:
+                                    break
 
-                            if content:
-                                # 检查是否超出长度限制
-                                if total_length + len(content) > MAX_TOTAL_LENGTH:
-                                    # 截断最后一条
-                                    remaining = MAX_TOTAL_LENGTH - total_length
-                                    if remaining > 100:  # 至少保留 100 字符才有意义
-                                        content = content[:remaining] + "...[截断]"
-                                    else:
-                                        break
+                            context_parts.append(content)
+                            total_length += len(content)
 
-                                context_parts.append(content)
-                                total_length += len(content)
-
-                        if context_parts:
-                            kb_context = "\n\n".join(context_parts)
-                            logger.debug(f"KB query success: {len(context_parts)} results, {total_length} chars")
-                        else:
-                            logger.debug("KB query completed with no valid content")
+                    if context_parts:
+                        kb_context = "\n\n".join(context_parts)
+                        logger.debug(f"KB query success: {len(context_parts)} results, {total_length} chars")
+                    else:
+                        logger.debug("KB query completed with no valid content")
 
             # 3. 使用 LLM 生成回答
             if kb_context:
-                # 构建带历史上下文的 prompt
+                # 构建精简的系统提示词（节省token）
                 if conversation_history:
-                    prompt = ChatPromptTemplate.from_messages([
-                        ("system", """你是一个专业的客服助手。请根据知识库内容和对话历史回答用户问题。
+                    system_prompt = f"""你是客服助手。请根据知识库和历史回答。
 
-对话历史：
-{history}
+历史：
+{conversation_history}
 
-知识库内容：
-{knowledge}
+知识库：
+{kb_context}
 
-请根据以上信息回答用户的最新问题。如果知识库中没有相关信息，请礼貌地告知用户您无法回答该问题，并建议创建工单以便人工处理。"""),
-                        ("human", "{input}")
-                    ])
-                    chain = prompt | settings.llm
-                    response = chain.invoke({
-                        "input": user_input,
-                        "knowledge": kb_context,
-                        "history": conversation_history
-                    })
+无相关信息请建议创建工单。"""
                 else:
-                    prompt = ChatPromptTemplate.from_messages([
-                        ("system", """你是一个专业的客服助手。请根据知识库内容回答用户问题。
-如果知识库中没有相关信息，请礼貌地告知用户您无法回答该问题，并建议创建工单以便人工处理。
+                    system_prompt = f"""你是客服助手。请根据知识库回答。
 
-知识库内容：
-{knowledge}"""),
-                        ("human", "{input}")
-                    ])
-                    chain = prompt | settings.llm
-                    response = chain.invoke({
-                        "input": user_input,
-                        "knowledge": kb_context
-                    })
+知识库：
+{kb_context}
+
+无相关信息请建议创建工单。"""
+
+                prompt = ChatPromptTemplate.from_messages([
+                    ("system", system_prompt),
+                    ("human", user_input)
+                ])
+                chain = prompt | settings.llm
+                response = chain.invoke({})
 
                 return {
                     **state,

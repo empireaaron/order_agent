@@ -30,7 +30,6 @@ def extract_text_from_file(file_path: str, file_type: str) -> str:
 
     from langchain_community.document_loaders import (
         TextLoader,
-        PyPDFLoader,
         UnstructuredMarkdownLoader,
         Docx2txtLoader,
         CSVLoader
@@ -77,8 +76,15 @@ def extract_text_from_file(file_path: str, file_type: str) -> str:
                 documents = loader.load()
 
         elif file_type == ".pdf":
-            loader = PyPDFLoader(tmp_path)
-            documents = loader.load()
+            # 使用 pdfplumber 替代 PyPDFLoader，更好地保留阅读顺序
+            import pdfplumber
+            text = ""
+            with pdfplumber.open(tmp_path) as pdf:
+                for page in pdf.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n\n"
+            return text
 
         elif file_type == ".docx":
             loader = Docx2txtLoader(tmp_path)
@@ -193,7 +199,7 @@ def process_document(doc_id: str, file_path: str, file_type: str, collection_nam
         # 1. 提取文本
         print(f"[Process] Extracting text from {file_path}")
         text = extract_text_from_file(file_path, file_type)
-
+        print(f"[Process] Extracted {text} characters")
         if not text or len(text.strip()) == 0:
             return {"success": False, "chunk_count": 0, "error": "No text content extracted"}
 
@@ -223,7 +229,7 @@ def process_document(doc_id: str, file_path: str, file_type: str, collection_nam
                 "metadata": {
                     "doc_id": doc_id,
                     "chunk_index": i,
-                    "content": chunk[:1000]  # 限制存储长度
+                    "content": chunk  # 存储完整内容
                 }
             })
 

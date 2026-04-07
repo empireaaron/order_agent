@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from db.session import get_db
-from auth.middleware import get_current_active_user
+from auth.middleware import get_current_active_user, require_admin_role
 from models import User
 from agents.nodes import ticket_bot_graph
 from agents.state import AgentState
@@ -98,3 +98,23 @@ def chat_with_agent_stream(
 ):
     """流式聊天接口（预留）"""
     pass
+
+
+@router.post("/clear-history")
+def clear_chat_history(
+    current_user: User = Depends(get_current_active_user)
+):
+    """清除当前用户的历史对话记录"""
+    user_id = str(current_user.id)
+    short_term_memory.clear_memory(user_id)
+    return {"message": "历史对话已清除"}
+
+
+@router.delete("/clear-history/{user_id}")
+def clear_user_chat_history(
+    user_id: str,
+    current_user: User = Depends(require_admin_role)
+):
+    """管理员清除指定用户的历史对话记录"""
+    short_term_memory.clear_memory(user_id)
+    return {"message": f"用户 {user_id} 的历史对话已清除"}

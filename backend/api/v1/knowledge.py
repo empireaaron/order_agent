@@ -237,7 +237,31 @@ def delete_document(
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
 
+    # 1. 从 MinIO 删除文件
+    try:
+        from tools.minio_tools import delete_file
+        delete_file(doc.file_path)
+    except Exception as e:
+        print(f"Warning: Failed to delete file from MinIO: {e}")
+
+    # 2. 从 Milvus 删除该文档的所有向量数据
+    try:
+        from db.milvus import milvus_manager
+        milvus_manager.delete(
+            collection_name=kb.collection_name,
+            expr=f"id like '{doc.id}_%'"
+        )
+    except Exception as e:
+        print(f"Warning: Failed to delete vectors from Milvus: {e}")
+
+    # 3. 删除数据库记录
     db.delete(doc)
+    db.commit()
+
+    # 4. 更新知识库文档计数
+    kb.document_count = db.query(Document).filter(
+        Document.knowledge_base_id == kb_id
+    ).count()
     db.commit()
 
     return {"message": "Document deleted successfully"}

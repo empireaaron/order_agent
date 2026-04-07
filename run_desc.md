@@ -75,7 +75,7 @@ python manage.py run-backend
 # 启动后端（方式2：使用 uvicorn）
 uvicorn main:app --reload --host 0.0.0.0 --port 8001
 ```
-
+ Invoke-RestMethod -Uri "http://localhost:8001/api/v1/chat/clear-history" -Method POST -Headers @{"Authorization"="Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI5OTQ1YTM2Ny0yYzA4LTQ4ZTItYjE3Mi1hZTE2ZGVlYWJmMDAiLCJyb2xlIjoiY3VzdG9tZXIiLCJleHAiOjE3NzU1NTc1MjB9.4tc8BuXB0_mOYQe8pfmy5grQYZEBaXBGXi7TNM27Lo4"}
 ### 3. 前端启动
 
 ```bash
