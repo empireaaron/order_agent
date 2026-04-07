@@ -6,10 +6,13 @@ import asyncio
 from typing import Dict, Set
 from fastapi import WebSocket
 from sqlalchemy.orm import Session
+import logging
 from datetime import datetime
 
 from models.chat import ChatSession, ChatMessage, AgentStatus
 from db.session import get_db_context
+
+logger = logging.getLogger(__name__)
 
 
 class ChatWebSocketManager:
@@ -25,7 +28,7 @@ class ChatWebSocketManager:
         """用户连接 - 注意：调用前需要先 await websocket.accept()"""
         user_id_str = str(user_id)
         self.user_connections[user_id_str] = websocket
-        print(f"Chat user {user_id_str} connected, total connections: {len(self.user_connections)}")
+        logger.info(f"Chat user connected, total connections: {len(self.user_connections)}")
 
         # 检查用户是否有进行中的会话，如果有则自动加入
         await self.auto_join_sessions(user_id_str)
@@ -42,12 +45,12 @@ class ChatWebSocketManager:
             for role, uid in list(self.session_users[session_id].items()):
                 if uid == user_id_str:
                     del self.session_users[session_id][role]
-                    print(f"User {user_id_str} removed from session {session_id} as {role}")
+                    logger.debug(f"User removed from session {session_id} as {role}")
             # 如果会话为空，删除会话
             if not self.session_users[session_id]:
                 del self.session_users[session_id]
 
-        print(f"Chat user {user_id_str} disconnected, remaining connections: {len(self.user_connections)}")
+        logger.info(f"Chat user disconnected, remaining connections: {len(self.user_connections)}")
 
     async def auto_join_sessions(self, user_id: str):
         """自动加入用户进行中的会话"""
@@ -58,7 +61,7 @@ class ChatWebSocketManager:
                 ChatSession.status == "connected"
             ).all()
 
-            print(f"DEBUG auto_join_sessions for {user_id}: found {len(sessions)} active sessions")
+            logger.debug(f"auto_join_sessions: found {len(sessions)} active sessions")
 
             for session in sessions:
                 session_id = str(session.id)
@@ -80,46 +83,45 @@ class ChatWebSocketManager:
                     "role": role,
                     "message": "已重新连接到会话"
                 })
-                print(f"DEBUG auto-joined user {user_id} to session {session_id} as {role}")
+                logger.debug(f"auto-joined user to session {session_id}")
 
     async def send_to_user(self, user_id: str, message: dict):
         """发送消息给指定用户"""
         user_id_str = str(user_id)
-        print(f"DEBUG send_to_user: target={user_id_str}, connections={list(self.user_connections.keys())}")
+        logger.debug(f"send_to_user: {len(self.user_connections)} connections")
         if user_id_str in self.user_connections:
             try:
                 await self.user_connections[user_id_str].send_json(message)
-                print(f"DEBUG message sent to user {user_id_str}")
+                logger.debug("message sent to user")
             except Exception as e:
-                print(f"Error sending to user {user_id_str}: {e}")
+                logger.error(f"Error sending to user: {e}")
         else:
-            print(f"DEBUG user {user_id_str} not in connections")
+            logger.debug("user not in connections")
 
     async def send_to_session(self, session_id: str, message: dict, exclude_user: str = None):
         """发送消息给会话中的所有用户"""
         session_id_str = str(session_id)
         exclude_str = str(exclude_user) if exclude_user else None
 
-        print(f"DEBUG send_to_session: session_id={session_id_str}")
-        print(f"DEBUG session_users: {self.session_users}")
+        logger.debug(f"send_to_session: session_id={session_id_str}")
 
         if session_id_str not in self.session_users:
-            print(f"DEBUG session {session_id_str} not found")
+            logger.debug(f"session {session_id_str} not found")
             return
 
         users = self.session_users[session_id_str]
-        print(f"DEBUG users in session: {users}")
+        logger.debug(f"users in session: {len(users)} users")
 
         for role, user_id in users.items():
             user_id_str = str(user_id)
-            print(f"DEBUG processing role={role}, user_id={user_id_str}")
+            logger.debug(f"processing role={role}")
 
             # 跳过被排除的用户
             if exclude_str and user_id_str == exclude_str:
-                print(f"DEBUG excluding {user_id_str}")
+                logger.debug("excluding sender from broadcast")
                 continue
 
-            print(f"DEBUG sending to {user_id_str}")
+                logger.debug("sending message")
             await self.send_to_user(user_id_str, message)
 
     async def broadcast_all(self, message: dict, exclude_user: str = None):
@@ -129,7 +131,7 @@ class ChatWebSocketManager:
                 try:
                     await websocket.send_json(message)
                 except Exception as e:
-                    print(f"Error broadcasting to user {user_id}: {e}")
+                    logger.error(f"Error broadcasting to user: {e}")
 
     async def broadcast_to_agents(self, message: dict, exclude_user: str = None):
         """广播消息给所有在线客服"""
@@ -141,21 +143,20 @@ class ChatWebSocketManager:
                 AgentStatus.status == "online"
             ).all()
 
-            print(f"DEBUG: Found {len(agent_statuses)} online agents")
-            print(f"DEBUG: Current connections: {list(self.user_connections.keys())}")
+            logger.debug(f"Found {len(agent_statuses)} online agents, {len(self.user_connections)} connections")
 
             for status in agent_statuses:
                 agent_id = str(status.agent_id)  # 确保是字符串
                 exclude_id = str(exclude_user) if exclude_user else None
 
-                print(f"DEBUG: Checking agent {agent_id}, in connections: {agent_id in self.user_connections}")
+                logger.debug(f"Checking agent availability")
 
                 if agent_id != exclude_id and agent_id in self.user_connections:
                     try:
                         await self.user_connections[agent_id].send_json(message)
-                        print(f"DEBUG: Broadcasted to agent {agent_id}")
+                        logger.debug("Broadcasted to agent")
                     except Exception as e:
-                        print(f"Error broadcasting to agent {agent_id}: {e}")
+                        logger.error(f"Error broadcasting to agent: {e}")
 
     def join_session(self, session_id: str, user_id: str, role: str):
         """用户加入会话"""
@@ -163,8 +164,8 @@ class ChatWebSocketManager:
         if session_id not in self.session_users:
             self.session_users[session_id] = {}
         self.session_users[session_id][role] = user_id_str
-        print(f"User {user_id_str} joined session {session_id} as {role}")
-        print(f"DEBUG current session_users: {self.session_users}")
+        logger.info(f"User joined session {session_id}")
+        logger.debug(f"Session users updated: {len(self.session_users)} sessions")
 
     def leave_session(self, session_id: str, user_id: str):
         """用户离开会话"""
@@ -180,13 +181,16 @@ class ChatWebSocketManager:
         msg_type = data.get("type")
 
         user_id_str = str(user_id)
-        print(f"DEBUG handle_message from {user_id_str}: type={msg_type}")
+        # 记录消息接收
+        from utils.metrics import metrics
+        metrics.record_ws_message(sent=False)
+        logger.debug(f"handle_message: type={msg_type}")
 
         if msg_type == "join_session":
             # 加入会话
             session_id = data.get("session_id")
             role = data.get("role", "customer")
-            print(f"DEBUG joining session {session_id} as {role}")
+            logger.debug(f"Joining session {session_id}")
             self.join_session(session_id, user_id_str, role)
 
             await self.send_to_user(user_id_str, {
@@ -199,7 +203,7 @@ class ChatWebSocketManager:
             # 聊天消息
             session_id = data.get("session_id")
             content = data.get("content")
-            print(f"DEBUG chat_message from {user_id_str}, session {session_id}: {content}")
+            logger.debug(f"Chat message in session {session_id}")
 
             # 保存到数据库
             with get_db_context() as db:
@@ -211,7 +215,7 @@ class ChatWebSocketManager:
                     # 确定发送者类型 - 统一使用字符串比较
                     session_agent_id = str(session.agent_id) if session.agent_id else None
                     sender_type = "agent" if user_id_str == session_agent_id else "customer"
-                    print(f"DEBUG sender_type={sender_type}, session.agent_id={session_agent_id}, user_id={user_id_str}")
+                    logger.debug(f"Processing message with sender_type={sender_type}")
 
                     # 获取发送者信息
                     from models import User
@@ -248,10 +252,10 @@ class ChatWebSocketManager:
                             "created_at": msg.created_at.isoformat()
                         }
                     }
-                    print(f"DEBUG broadcasting message to session {session_id}, exclude {user_id_str}")
+                    logger.debug(f"Broadcasting message to session {session_id}")
                     await self.send_to_session(session_id, broadcast_msg, exclude_user=user_id_str)
                 else:
-                    print(f"DEBUG session {session_id} not found")
+                    logger.debug(f"Session {session_id} not found")
 
         elif msg_type == "typing":
             # 正在输入

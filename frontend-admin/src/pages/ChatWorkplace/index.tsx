@@ -46,7 +46,7 @@ interface WaitingSession {
 }
 
 const ChatWorkplace: React.FC = () => {
-  const { user } = useAuthStore()
+  const { user, token } = useAuthStore()
   const [online, setOnline] = useState(false)
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [waitingSessions, setWaitingSessions] = useState<WaitingSession[]>([])
@@ -72,20 +72,6 @@ const ChatWorkplace: React.FC = () => {
         wsRef.current.close()
       }
       return
-    }
-
-    // 从 localStorage 获取 token（兼容直接存储和 zustand persist）
-    let token = localStorage.getItem('token')
-    if (!token) {
-      const authStorage = localStorage.getItem('auth-storage')
-      if (authStorage) {
-        try {
-          const parsed = JSON.parse(authStorage)
-          token = parsed.state?.token
-        } catch (e) {
-          console.error('Failed to parse auth-storage:', e)
-        }
-      }
     }
 
     if (!token) {
@@ -128,7 +114,7 @@ const ChatWorkplace: React.FC = () => {
     return () => {
       ws.close()
     }
-  }, [online])
+  }, [online, token])
 
   // 自动滚动到底部
   useEffect(() => {

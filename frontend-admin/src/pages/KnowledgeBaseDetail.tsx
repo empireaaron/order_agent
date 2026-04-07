@@ -278,11 +278,22 @@ const KnowledgeBaseDetailPage: React.FC = () => {
         title={<Title level={4}>文档列表</Title>}
         extra={
           <Upload
-            action={`/api/v1/knowledge/${id}/documents`}
-            headers={{
-              Authorization: `Bearer ${localStorage.getItem('token')}`,
+            customRequest={async ({ file, onSuccess, onError }) => {
+              try {
+                const formData = new FormData()
+                formData.append('file', file)
+                await api.post(`/knowledge/${id}/documents`, formData, {
+                  headers: { 'Content-Type': 'multipart/form-data' },
+                })
+                message.success(`${(file as File).name} 上传成功`)
+                onSuccess?.('ok')
+                fetchDocuments()
+                fetchKnowledgeBase()
+              } catch (error) {
+                message.error(`${(file as File).name} 上传失败`)
+                onError?.(error as Error)
+              }
             }}
-            onChange={handleUploadChange}
             showUploadList={false}
           >
             <Button type="primary" icon={<UploadOutlined />}>

@@ -1,9 +1,12 @@
 """
 Milvus 向量数据库连接和索引管理
 """
+import logging
 from pymilvus import MilvusClient, DataType
 
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class MilvusManager:
@@ -24,7 +27,7 @@ class MilvusManager:
             )
             return True
         except Exception as e:
-            print(f"Milvus 连接失败: {e}")
+            logger.error(f"Milvus connection failed: {e}")
             return False
 
     def disconnect(self):
@@ -45,7 +48,7 @@ class MilvusManager:
 
         try:
             if self.client.has_collection(collection_name):
-                print(f"Collection {collection_name} 已存在")
+                logger.info(f"Collection {collection_name} already exists")
                 return True
 
             # 使用显式 schema 定义，支持字符串类型的 ID
@@ -91,10 +94,10 @@ class MilvusManager:
                 index_params=index_params
             )
 
-            print(f"Collection {collection_name} 创建成功")
+            logger.info(f"Collection {collection_name} created successfully")
             return True
         except Exception as e:
-            print(f"创建 Collection 失败: {e}")
+            logger.error(f"Failed to create collection: {e}")
             return False
 
     def insert(self, collection_name: str, data: list) -> bool:
@@ -110,13 +113,13 @@ class MilvusManager:
         try:
             # 先检查集合是否存在
             if not self.client.has_collection(collection_name):
-                print(f"集合 {collection_name} 不存在，尝试创建...")
+                logger.info(f"Collection {collection_name} does not exist, trying to create...")
                 # 尝试自动创建集合
                 dimension = len(data[0]["vector"]) if data else 1536
                 if self.create_collection(collection_name, dimension):
-                    print(f"集合 {collection_name} 创建成功，继续插入数据...")
+                    logger.info(f"Collection {collection_name} created successfully, continuing data insertion...")
                 else:
-                    print(f"自动创建集合 {collection_name} 失败")
+                    logger.error(f"Failed to auto-create collection {collection_name}")
                     return False
 
             self.client.insert(
@@ -126,13 +129,13 @@ class MilvusManager:
             return True
         except Exception as e:
             error_msg = str(e)
-            print(f"插入数据失败: {error_msg}")
+            logger.error(f"Failed to insert data: {error_msg}")
 
             # 检测是否是 schema 类型不匹配错误
             if "should be a int64" in error_msg or "should be a varchar" in error_msg:
-                print(f"\n[错误提示] 集合 {collection_name} 的 schema 与当前数据类型不匹配。")
-                print("可能原因: 该集合是使用旧代码创建的，ID 字段类型为 int64，但新代码使用 varchar 类型。")
-                print("解决方法: 删除该知识库后重新创建，或手动删除 Milvus 中的集合后重建。")
+                logger.warning(f"\n[Error Hint] Collection {collection_name} schema mismatch with current data type.")
+                logger.warning("Possible cause: The collection was created with old code, ID field type is int64, but new code uses varchar.")
+                logger.warning("Solution: Delete and recreate the knowledge base, or manually drop the collection in Milvus.")
 
             return False
 
@@ -184,7 +187,7 @@ class MilvusManager:
 
             return filtered_results
         except Exception as e:
-            print(f"搜索失败: {e}")
+            logger.error(f"Search failed: {e}")
             return []
 
     def delete_by_filter(self, collection_name: str, filter_expr: str) -> bool:
@@ -204,7 +207,7 @@ class MilvusManager:
             )
             return True
         except Exception as e:
-            print(f"删除数据失败: {e}")
+            logger.error(f"Failed to delete data: {e}")
             return False
 
     def query(self, collection_name: str, filter_expr: str, output_fields: list = None) -> list:
@@ -229,7 +232,7 @@ class MilvusManager:
             )
             return results
         except Exception as e:
-            print(f"查询失败: {e}")
+            logger.error(f"Query failed: {e}")
             return []
 
     def get_collection_stats(self, collection_name: str) -> dict:
@@ -248,7 +251,7 @@ class MilvusManager:
             row_count = self.client.get_collection_stats(collection_name)["row_count"]
             return {"collection_name": collection_name, "row_count": row_count}
         except Exception as e:
-            print(f"获取统计信息失败: {e}")
+            logger.error(f"Failed to get statistics: {e}")
             return {}
 
     def drop_collection(self, collection_name: str) -> bool:
@@ -266,10 +269,10 @@ class MilvusManager:
         try:
             if self.client.has_collection(collection_name):
                 self.client.drop_collection(collection_name)
-                print(f"Collection {collection_name} 已删除")
+                logger.info(f"Collection {collection_name} deleted")
             return True
         except Exception as e:
-            print(f"删除 Collection 失败: {e}")
+            logger.error(f"Failed to delete collection: {e}")
             return False
 
     def has_collection(self, collection_name: str) -> bool:
@@ -287,7 +290,7 @@ class MilvusManager:
         try:
             return self.client.has_collection(collection_name)
         except Exception as e:
-            print(f"检查 Collection 失败: {e}")
+            logger.error(f"Failed to check collection: {e}")
             return False
 
 

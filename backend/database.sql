@@ -209,3 +209,54 @@ CREATE TABLE IF NOT EXISTS `agent_status` (
     `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     CONSTRAINT `fk_agent_status_agent` FOREIGN KEY (`agent_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='客服在线状态表';
+
+-- ==========================================
+-- 监控指标统计表
+-- ==========================================
+
+-- 意图识别统计表 - 按天聚合
+CREATE TABLE IF NOT EXISTS `intent_metrics` (
+    `id` VARCHAR(36) PRIMARY KEY COMMENT '记录ID (UUID)',
+    `metric_date` DATE NOT NULL COMMENT '统计日期',
+    `intent` VARCHAR(50) NOT NULL COMMENT '意图类型: create_ticket/query_ticket/process_ticket/summary/general',
+    `total` INT DEFAULT 0 NOT NULL COMMENT '总识别次数',
+    `correct` INT DEFAULT 0 NOT NULL COMMENT '正确次数',
+    `confidence_sum` FLOAT DEFAULT 0.0 COMMENT '置信度总和（用于计算平均置信度）',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY `uk_date_intent` (`metric_date`, `intent`),
+    INDEX `idx_metric_date` (`metric_date`),
+    INDEX `idx_intent` (`intent`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='意图识别统计表 - 按天聚合';
+
+-- API 响应时间统计表 - 按天、端点、方法聚合
+CREATE TABLE IF NOT EXISTS `api_metrics` (
+    `id` VARCHAR(36) PRIMARY KEY COMMENT '记录ID (UUID)',
+    `metric_date` DATE NOT NULL COMMENT '统计日期',
+    `endpoint` VARCHAR(255) NOT NULL COMMENT 'API 端点路径',
+    `method` VARCHAR(10) NOT NULL COMMENT 'HTTP 方法: GET/POST/PUT/DELETE',
+    `request_count` INT DEFAULT 0 NOT NULL COMMENT '请求次数',
+    `error_count` INT DEFAULT 0 NOT NULL COMMENT '错误次数（4xx/5xx）',
+    `latency_sum_ms` FLOAT DEFAULT 0.0 COMMENT '总响应时间（毫秒）',
+    `latency_min_ms` FLOAT DEFAULT 0.0 COMMENT '最小响应时间',
+    `latency_max_ms` FLOAT DEFAULT 0.0 COMMENT '最大响应时间',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY `uk_date_endpoint_method` (`metric_date`, `endpoint`, `method`),
+    INDEX `idx_metric_date` (`metric_date`),
+    INDEX `idx_endpoint` (`endpoint`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='API 响应时间统计表 - 按天聚合';
+
+-- 错误统计表 - 按天、错误类型聚合
+CREATE TABLE IF NOT EXISTS `error_metrics` (
+    `id` VARCHAR(36) PRIMARY KEY COMMENT '记录ID (UUID)',
+    `metric_date` DATE NOT NULL COMMENT '统计日期',
+    `error_type` VARCHAR(100) NOT NULL COMMENT '错误类型: HTTP404/HTTP500/ValidationError等',
+    `endpoint` VARCHAR(255) DEFAULT NULL COMMENT '发生错误的端点（可选）',
+    `count` INT DEFAULT 0 NOT NULL COMMENT '错误次数',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY `uk_date_type_endpoint` (`metric_date`, `error_type`, `endpoint`),
+    INDEX `idx_metric_date` (`metric_date`),
+    INDEX `idx_error_type` (`error_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='错误统计表 - 按天聚合';

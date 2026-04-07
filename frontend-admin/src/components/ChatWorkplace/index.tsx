@@ -33,7 +33,7 @@ interface ChatMessage {
 }
 
 const ChatWorkplace: React.FC = () => {
-  const { user } = useAuthStore()
+  const { user, token } = useAuthStore()
   const [online, setOnline] = useState(false)
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [waitingCount, setWaitingCount] = useState(0)
@@ -53,7 +53,7 @@ const ChatWorkplace: React.FC = () => {
       return
     }
 
-    const token = localStorage.getItem('token')
+    if (!token) return
     const ws = new WebSocket(`ws://localhost:8000/ws/chat?token=${token}`)
     wsRef.current = ws
 

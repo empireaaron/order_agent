@@ -1,9 +1,14 @@
 """
 WebSocket 连接管理器
 """
+import logging
 import asyncio
 from typing import Dict, Set
 from fastapi import WebSocket, WebSocketDisconnect
+
+from utils.metrics import metrics
+
+logger = logging.getLogger(__name__)
 
 
 class ConnectionManager:
@@ -18,18 +23,21 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket, user_id: str):
         """建立连接 - 注意：调用前需要先 await websocket.accept()"""
         self.active_connections[user_id] = websocket
-        print(f"User {user_id} connected, total: {len(self.active_connections)}")
+        metrics.record_ws_connection(connected=True)
+        logger.info(f"User connected, total connections: {len(self.active_connections)}")
 
     def disconnect(self, user_id: str):
         """断开连接"""
         if user_id in self.active_connections:
             del self.active_connections[user_id]
-        print(f"User {user_id} disconnected")
+        metrics.record_ws_connection(connected=False)
+        logger.info(f"User disconnected, remaining: {len(self.active_connections)}")
 
     async def send_personal_message(self, user_id: str, message: dict):
         """发送个人消息"""
         if user_id in self.active_connections:
             await self.active_connections[user_id].send_json(message)
+            metrics.record_ws_message(sent=True)
 
     async def broadcast(self, message: dict):
         """广播消息给所有连接"""

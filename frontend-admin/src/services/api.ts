@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { useAuthStore } from '../stores/authStore'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
@@ -9,25 +10,14 @@ const api = axios.create({
   },
 })
 
+// 获取 token 的辅助函数
+const getToken = () => useAuthStore.getState().token
+const getRefreshToken = () => useAuthStore.getState().refreshToken
+
 // 请求拦截器
 api.interceptors.request.use(
   (config) => {
-    // 从 localStorage 获取 token（兼容直接存储和 zustand persist）
-    let token = localStorage.getItem('token')
-
-    // 如果没有直接存储的token，尝试从 zustand persist 读取
-    if (!token) {
-      const authStorage = localStorage.getItem('auth-storage')
-      if (authStorage) {
-        try {
-          const parsed = JSON.parse(authStorage)
-          token = parsed.state?.token
-        } catch (e) {
-          console.error('Failed to parse auth-storage:', e)
-        }
-      }
-    }
-
+    const token = getToken()
     console.log('[API Request]', config.url, 'Token:', token ? '存在' : '不存在')
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
@@ -50,20 +40,7 @@ api.interceptors.response.use(
     // 如果是 401 错误且不是刷新 token 的请求
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true
-      let refreshToken = localStorage.getItem('refreshToken')
-
-      // 如果没有直接存储的refreshToken，尝试从 zustand persist 读取
-      if (!refreshToken) {
-        const authStorage = localStorage.getItem('auth-storage')
-        if (authStorage) {
-          try {
-            const parsed = JSON.parse(authStorage)
-            refreshToken = parsed.state?.refreshToken
-          } catch (e) {
-            console.error('Failed to parse auth-storage for refresh token:', e)
-          }
-        }
-      }
+      const refreshToken = getRefreshToken()
 
       if (refreshToken) {
         try {
@@ -72,31 +49,22 @@ api.interceptors.response.use(
           })
 
           const { access_token } = response.data
-          localStorage.setItem('token', access_token)
+          // 更新 store 中的 token
+          useAuthStore.setState({ token: access_token })
 
           // 重试原请求
           originalRequest.headers.Authorization = `Bearer ${access_token}`
           return api(originalRequest)
         } catch (refreshError) {
           // 刷新失败，清除登录状态
-          localStorage.removeItem('token')
-          localStorage.removeItem('refreshToken')
-          // 清除 zustand persist 存储
-          localStorage.removeItem('auth-storage')
-          // 触发 storage 事件通知其他标签页
-          window.dispatchEvent(new StorageEvent('storage', { key: 'auth-storage' }))
+          useAuthStore.getState().logout()
           window.location.href = '/login'
           return Promise.reject(refreshError)
         }
       } else {
         // 没有 refresh token，直接跳转到登录页
         console.error('No refresh token, redirecting to login')
-        localStorage.removeItem('token')
-        localStorage.removeItem('refreshToken')
-        // 清除 zustand persist 存储
-        localStorage.removeItem('auth-storage')
-        // 触发 storage 事件通知其他标签页
-        window.dispatchEvent(new StorageEvent('storage', { key: 'auth-storage' }))
+        useAuthStore.getState().logout()
         window.location.href = '/login'
       }
     }

@@ -1,6 +1,7 @@
 """
 LangGraph 智能体节点函数
 """
+import logging
 from datetime import datetime
 import re
 
@@ -11,6 +12,9 @@ from config import settings
 from db.session import get_db_context
 from models import User, Ticket
 from agents.state import AgentState
+from utils.metrics import metrics
+
+logger = logging.getLogger(__name__)
 
 
 def analyze_intent(state: AgentState) -> AgentState:
@@ -39,9 +43,13 @@ def analyze_intent(state: AgentState) -> AgentState:
     intent = response.content.strip().lower()
     valid_intents = ["create_ticket", "query_ticket", "process_ticket", "summary", "general"]
 
+    # 记录意图识别（准确率稍后通过用户反馈更新）
+    final_intent = intent if intent in valid_intents else "general"
+    metrics.record_intent_classification(final_intent)
+
     return {
         **state,
-        "intent": intent if intent in valid_intents else "general"
+        "intent": final_intent
     }
 
 
@@ -113,8 +121,7 @@ def create_ticket_node(state: AgentState) -> AgentState:
             )
 
             # 调试日志
-            print(f"[DEBUG] Created ticket: id={ticket.id}, priority={ticket.priority}, category={ticket.category}")
-            print(f"[DEBUG] Extracted values: title={title}, priority={priority}, category={category}")
+            logger.debug(f"Created ticket: id={ticket.id}, priority={ticket.priority}, category={ticket.category}")
 
             return {
                 **state,
@@ -328,7 +335,6 @@ def query_knowledge_node(state: AgentState) -> AgentState:
             # 1. 查询知识库
             from models import KnowledgeBase
             customer_id = customer_info.get("user_id")
-            print(f"[DEBUG] 查询知识库: customer_id={customer_id}")
             kb_context = ""
             kb_search_info = {"searched": False, "kb_count": 0, "results_count": 0}
 
@@ -340,7 +346,7 @@ def query_knowledge_node(state: AgentState) -> AgentState:
 
                 kb_search_info["searched"] = True
                 kb_search_info["kb_count"] = len(kb_list)
-                print(f"[DEBUG] 查询知识库: customer_id={customer_id}, 找到 {len(kb_list)} 个知识库")
+                logger.debug(f"Found {len(kb_list)} knowledge bases")
 
                 if kb_list:
                     # 2. 从知识库中检索相关内容（带相似度过滤）
@@ -348,18 +354,16 @@ def query_knowledge_node(state: AgentState) -> AgentState:
                     from tools.milvus_tools import generate_embedding, search_kb_batch
 
                     # 2.1 只生成一次 embedding
-                    print(f"[DEBUG] 生成查询向量（优化：只生成一次）")
                     query_vector = generate_embedding(user_input)
 
                     # 2.2 并行搜索所有知识库
-                    print(f"[DEBUG] 并行搜索 {len(kb_list)} 个知识库")
                     all_raw_results = search_kb_batch(
                         query_vector=query_vector,
                         knowledge_bases=kb_list,
                         top_k=3,
                         similarity_threshold=0.5
                     )
-                    print(f"[DEBUG] 知识库搜索完成，共返回 {len(all_raw_results)} 条结果")
+                    logger.debug(f"Knowledge base search returned {len(all_raw_results)} results")
 
                     # 3. 全局排序：按相似度降序排列
                     if all_raw_results:
@@ -395,15 +399,12 @@ def query_knowledge_node(state: AgentState) -> AgentState:
 
                                 context_parts.append(content)
                                 total_length += len(content)
-                                print(f"[DEBUG] [{kb_name}] 相似度: {similarity:.3f} | 内容: {content[:60]}...")
 
                         if context_parts:
                             kb_context = "\n\n".join(context_parts)
-                            print(f"[DEBUG] 知识库查询成功，共 {len(context_parts)} 条匹配结果，总长度 {total_length} 字符")
+                            logger.debug(f"KB query success: {len(context_parts)} results, {total_length} chars")
                         else:
-                            print(f"[DEBUG] 知识库查询完成，但无有效内容")
-                    else:
-                        print(f"[DEBUG] 知识库查询完成，无匹配结果")
+                            logger.debug("KB query completed with no valid content")
 
             # 3. 使用 LLM 生成回答
             if kb_context:
@@ -468,9 +469,7 @@ def query_knowledge_node(state: AgentState) -> AgentState:
                 }
 
     except Exception as e:
-        print(f"[ERROR] 知识库查询失败: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Knowledge base query failed: {e}", exc_info=True)
         return {
             **state,
             "knowledge_results": [],  # 异常时设置为空列表
@@ -528,7 +527,7 @@ def process_ticket_node(state: AgentState) -> AgentState:
                 ticket_no = _extract_ticket_no(user_input)
                 reason = user_input
 
-            print(f"[DEBUG] 工单操作分析: operation={operation}, ticket_no={ticket_no}")
+            logger.debug(f"Ticket operation analysis: operation={operation}")
 
             # 2. 如果没有工单号，查询用户的最新工单
             if not ticket_no:
@@ -706,9 +705,7 @@ def process_ticket_node(state: AgentState) -> AgentState:
                 }
 
     except Exception as e:
-        print(f"[ERROR] 处理工单失败: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Ticket processing failed: {e}", exc_info=True)
         return {
             **state,
             "response": f"处理工单时出错：{str(e)}。请稍后重试或联系人工客服。",

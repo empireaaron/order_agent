@@ -18,6 +18,7 @@ interface User {
 interface AuthState {
   user: User | null
   token: string | null
+  refreshToken: string | null
   isAuthenticated: boolean
   login: (username: string, password: string) => Promise<boolean>
   logout: () => void
@@ -29,6 +30,7 @@ export const useAuthStore = create<AuthState>()(
     (set, get) => ({
       user: null,
       token: null,
+      refreshToken: null,
       isAuthenticated: false,
 
       login: async (username: string, password: string) => {
@@ -44,8 +46,6 @@ export const useAuthStore = create<AuthState>()(
           })
 
           const { access_token, refresh_token } = response.data
-          localStorage.setItem('token', access_token)
-          localStorage.setItem('refreshToken', refresh_token)
 
           // 获取用户信息
           const userResponse = await api.get('/auth/me', {
@@ -57,6 +57,7 @@ export const useAuthStore = create<AuthState>()(
           set({
             user: userResponse.data,
             token: access_token,
+            refreshToken: refresh_token,
             isAuthenticated: true,
           })
 
@@ -68,17 +69,17 @@ export const useAuthStore = create<AuthState>()(
       },
 
       logout: () => {
-        localStorage.removeItem('token')
-        localStorage.removeItem('refreshToken')
         set({
           user: null,
           token: null,
+          refreshToken: null,
           isAuthenticated: false,
         })
+        // zustand persist 会自动清除存储
       },
 
       checkAuth: () => {
-        const token = localStorage.getItem('token')
+        const { token } = get()
         if (token) {
           // 验证 token 是否有效
           api.get('/auth/me', {
@@ -94,14 +95,11 @@ export const useAuthStore = create<AuthState>()(
               })
             })
             .catch(() => {
-              localStorage.removeItem('token')
-              localStorage.removeItem('refreshToken')
-              // 清除 zustand persist 存储
-              localStorage.removeItem('auth-storage')
-              // 重置状态
+              // 清除状态（zustand persist 会自动同步到 storage）
               set({
                 user: null,
                 token: null,
+                refreshToken: null,
                 isAuthenticated: false,
               })
               // 跳转到登录页

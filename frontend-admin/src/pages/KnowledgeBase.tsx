@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Table, Button, Card, Modal, Form, Input, Upload, message, Space, Tag, Select } from 'antd'
 import { PlusOutlined, UploadOutlined, SettingOutlined, DeleteOutlined } from '@ant-design/icons'
 import api from '../services/api'
+import { useAuthStore } from '../stores/authStore'
 
 interface KnowledgeBase {
   id: string
@@ -116,16 +117,19 @@ const KnowledgeBasePage: React.FC = () => {
             管理
           </Button>
           <Upload
-            action={`/api/v1/knowledge/${record.id}/documents`}
-            headers={{
-              Authorization: `Bearer ${localStorage.getItem('token')}`,
-            }}
-            onChange={(info) => {
-              if (info.file.status === 'done') {
-                message.success(`${info.file.name} 上传成功`)
+            customRequest={async ({ file, onSuccess, onError }) => {
+              try {
+                const formData = new FormData()
+                formData.append('file', file)
+                await api.post(`/knowledge/${record.id}/documents`, formData, {
+                  headers: { 'Content-Type': 'multipart/form-data' },
+                })
+                message.success(`${(file as File).name} 上传成功`)
+                onSuccess?.('ok')
                 fetchKbs()
-              } else if (info.file.status === 'error') {
-                message.error(`${info.file.name} 上传失败`)
+              } catch (error) {
+                message.error(`${(file as File).name} 上传失败`)
+                onError?.(error as Error)
               }
             }}
           >

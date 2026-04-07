@@ -12,10 +12,12 @@ from fastapi.exceptions import RequestValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
 from config import settings
-from api.v1 import auth, tickets, knowledge, users, chat, chat_service
+from api.v1 import auth, tickets, knowledge, users, chat, chat_service, metrics as metrics_api
 from websocket.manager import ws_manager
 from websocket.chat import chat_ws_manager
 from auth.jwt import decode_token
+from middleware.metrics import MetricsMiddleware
+from utils.metrics import metrics
 
 # 配置日志
 logging.basicConfig(
@@ -91,6 +93,9 @@ def create_app():
         max_age=600,
     )
 
+    # 监控指标中间件
+    app.add_middleware(MetricsMiddleware)
+
     # API 路由
     app.include_router(auth.router, prefix=settings.API_V1_PREFIX)
     app.include_router(tickets.router, prefix=settings.API_V1_PREFIX)
@@ -98,6 +103,7 @@ def create_app():
     app.include_router(users.router, prefix=settings.API_V1_PREFIX)
     app.include_router(chat.router, prefix=settings.API_V1_PREFIX)
     app.include_router(chat_service.router, prefix=settings.API_V1_PREFIX)
+    app.include_router(metrics_api.router, prefix=settings.API_V1_PREFIX)
 
     # 静态文件服务
     frontend_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend-admin", "dist")

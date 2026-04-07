@@ -1,6 +1,7 @@
 """
 权限中间件
 """
+import logging
 from fastapi import Request, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
@@ -8,6 +9,7 @@ from models import User
 from db.session import get_db
 from .jwt import decode_token
 
+logger = logging.getLogger(__name__)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 # 公共角色代码
@@ -21,9 +23,11 @@ async def get_current_user(
     db = Depends(get_db)
 ) -> User:
     """获取当前用户"""
-    print(f"DEBUG: get_current_user called with token={token[:20] + '...' if token else 'None'}")
+    # 安全日志：不记录 token 内容
+    logger.debug("get_current_user called")
     payload = decode_token(token)
-    print(f"DEBUG: decode_token result={payload}")
+    if payload:
+        logger.debug(f"Token decoded successfully for user_id: {payload.get('sub')}")
     if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -4,6 +4,7 @@
 from models.ticket import Role, User, Ticket, TicketMessage, TicketStatusLog
 from models.knowledge_base import KnowledgeBase, Document
 from models.chat import ChatSession, ChatMessage, AgentStatus
+from models.metrics import IntentMetrics, ApiMetrics, ErrorMetrics
 
 __all__ = [
     "Role",
@@ -15,5 +16,8 @@ __all__ = [
     "Document",
     "ChatSession",
     "ChatMessage",
-    "AgentStatus"
+    "AgentStatus",
+    "IntentMetrics",
+    "ApiMetrics",
+    "ErrorMetrics"
 ]
