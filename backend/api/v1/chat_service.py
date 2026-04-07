@@ -461,11 +461,13 @@ def send_chat_message(
 @router.get("/sessions/{session_id}/messages")
 def get_chat_messages(
     session_id: str,
+    page: int = Query(1, ge=1, description="页码，从1开始"),
+    page_size: int = Query(20, ge=1, le=100, description="每页消息数，最大100"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
-    获取会话消息历史
+    获取会话消息历史（分页加载）
     """
     session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if not session:
@@ -474,21 +476,38 @@ def get_chat_messages(
     if current_user.id not in [session.customer_id, session.agent_id]:
         raise HTTPException(status_code=403, detail="Not allowed")
 
-    messages = db.query(ChatMessage).filter(
+    # 分页查询消息
+    offset = (page - 1) * page_size
+    messages_query = db.query(ChatMessage).filter(
         ChatMessage.session_id == session_id
-    ).order_by(ChatMessage.created_at).all()
+    ).order_by(ChatMessage.created_at.desc())  # 降序获取最新消息
 
-    return [{
-        "id": m.id,
-        "content": m.content,
-        "sender_type": m.sender_type,
-        "sender": {
-            "id": m.sender_id,
-            "name": m.sender.full_name or m.sender.username
-        } if m.sender else None,
-        "is_read": m.is_read == "1",
-        "created_at": m.created_at.isoformat()
-    } for m in messages]
+    # 获取总数
+    total = messages_query.count()
+
+    # 分页获取消息
+    messages = messages_query.offset(offset).limit(page_size).all()
+
+    # 反转回正序（时间从旧到新）
+    messages.reverse()
+
+    return {
+        "items": [{
+            "id": m.id,
+            "content": m.content,
+            "sender_type": m.sender_type,
+            "sender": {
+                "id": m.sender_id,
+                "name": m.sender.full_name or m.sender.username
+            } if m.sender else None,
+            "is_read": m.is_read == "1",
+            "created_at": m.created_at.isoformat()
+        } for m in messages],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "has_more": offset + len(messages) < total
+    }
 
 
 @router.post("/sessions/{session_id}/close")

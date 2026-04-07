@@ -38,12 +38,16 @@
       chatMode: 'ai', // 'ai' 或 'human'
       chatSessionId: null,
       chatWs: null,
-      isWaitingForAgent: false
+      isWaitingForAgent: false,
+      // WebSocket 心跳相关
+      wsHeartbeatInterval: null,
+      chatWsHeartbeatInterval: null,
+      lastPongTime: null
     },
 
     init(userConfig) {
       this.config = { ...this.config, ...userConfig };
-      this.loadStyles();
+      this.createShadowHost();
       this.createWidget();
       this.attachEventListeners();
 
@@ -53,6 +57,33 @@
       if (this.config.showBubble) {
         this.showChatBubble();
       }
+    },
+
+    // 创建 Shadow DOM 宿主元素
+    createShadowHost() {
+      // 如果已存在则移除
+      const existingHost = document.getElementById('ticket-widget-host');
+      if (existingHost) {
+        existingHost.remove();
+      }
+
+      // 创建宿主元素
+      this.shadowHost = document.createElement('div');
+      this.shadowHost.id = 'ticket-widget-host';
+      document.body.appendChild(this.shadowHost);
+
+      // 附加 Shadow DOM (closed 模式提供完全隔离)
+      this.shadowRoot = this.shadowHost.attachShadow({ mode: 'closed' });
+
+      // 创建样式元素并附加到 Shadow DOM
+      const styleSheet = document.createElement('style');
+      styleSheet.textContent = this.getStyles();
+      this.shadowRoot.appendChild(styleSheet);
+
+      // 创建容器元素
+      this.widgetContainer = document.createElement('div');
+      this.widgetContainer.className = 'ticket-widget-container';
+      this.shadowRoot.appendChild(this.widgetContainer);
     },
 
     // 从 localStorage 恢复登录状态
@@ -73,10 +104,8 @@
             if (isValid) {
               console.log('Token is valid, re-rendering widget');
               // 重新创建 widget 以显示登录后的界面
-              const bubble = document.getElementById('ticket-widget-bubble');
-              const window = document.getElementById('ticket-widget-window');
-              if (bubble) bubble.remove();
-              if (window) window.remove();
+              this.createWidget();
+              this.attachEventListeners();
               this.createWidget();
               this.attachEventListeners();
               // 连接 WebSocket，会自动加入之前的会话
@@ -137,6 +166,25 @@
 
     // 清除登录状态
     clearLoginState() {
+      // 关闭 WebSocket 连接
+      if (this.state.ws) {
+        this.state.ws.close();
+        this.state.ws = null;
+      }
+      if (this.state.chatWs) {
+        this.state.chatWs.close();
+        this.state.chatWs = null;
+      }
+      // 清除心跳定时器
+      if (this.state.wsHeartbeatInterval) {
+        clearInterval(this.state.wsHeartbeatInterval);
+        this.state.wsHeartbeatInterval = null;
+      }
+      if (this.state.chatWsHeartbeatInterval) {
+        clearInterval(this.state.chatWsHeartbeatInterval);
+        this.state.chatWsHeartbeatInterval = null;
+      }
+
       localStorage.removeItem('widget_token');
       localStorage.removeItem('widget_user_id');
       localStorage.removeItem('widget_username');
@@ -145,8 +193,8 @@
       this.state.isAuthenticated = false;
     },
 
-    loadStyles() {
-      const styles = `
+    getStyles() {
+      return `
         .ticket-widget-container {
           position: fixed;
           z-index: 999999;
@@ -423,19 +471,18 @@
           40% { transform: scale(1); }
         }
       `;
-
-      const styleSheet = document.createElement('style');
-      styleSheet.textContent = styles;
-      document.head.appendChild(styleSheet);
     },
 
     createWidget() {
+      // 清空容器
+      this.widgetContainer.innerHTML = '';
+
       // 创建气泡按钮
       const bubble = document.createElement('button');
       bubble.className = 'ticket-widget-bubble';
       bubble.innerHTML = '💬';
       bubble.id = 'ticket-widget-bubble';
-      document.body.appendChild(bubble);
+      this.widgetContainer.appendChild(bubble);
 
       // 创建聊天窗口
       const window = document.createElement('div');
@@ -468,40 +515,44 @@
           <button class="ticket-widget-send" id="ticket-widget-send">➤</button>
         </div>
       `;
-      document.body.appendChild(window);
+      this.widgetContainer.appendChild(window);
     },
 
     attachEventListeners() {
+      // 使用 shadowRoot 查询元素
+      const bubble = this.shadowRoot.getElementById('ticket-widget-bubble');
+      const closeBtn = this.shadowRoot.getElementById('ticket-widget-close');
+      const transferBtn = this.shadowRoot.getElementById('ticket-widget-transfer');
+      const loginBtn = this.shadowRoot.getElementById('tw-login-btn');
+      const sendBtn = this.shadowRoot.getElementById('ticket-widget-send');
+      const input = this.shadowRoot.getElementById('ticket-widget-input');
+
       // 气泡按钮点击
-      document.getElementById('ticket-widget-bubble').addEventListener('click', () => {
-        this.toggleWindow();
-      });
+      if (bubble) {
+        bubble.addEventListener('click', () => this.toggleWindow());
+      }
 
       // 关闭按钮
-      document.getElementById('ticket-widget-close').addEventListener('click', () => {
-        this.closeWindow();
-      });
+      if (closeBtn) {
+        closeBtn.addEventListener('click', () => this.closeWindow());
+      }
 
       // 转人工按钮
-      const transferBtn = document.getElementById('ticket-widget-transfer');
       if (transferBtn) {
         transferBtn.addEventListener('click', () => this.transferToHuman());
       }
 
       // 登录按钮
-      const loginBtn = document.getElementById('tw-login-btn');
       if (loginBtn) {
         loginBtn.addEventListener('click', () => this.handleLogin());
       }
 
       // 发送按钮
-      const sendBtn = document.getElementById('ticket-widget-send');
       if (sendBtn) {
         sendBtn.addEventListener('click', () => this.sendMessage());
       }
 
       // 输入框回车
-      const input = document.getElementById('ticket-widget-input');
       if (input) {
         input.addEventListener('keypress', (e) => {
           if (e.key === 'Enter') {
@@ -516,20 +567,20 @@
     },
 
     toggleWindow() {
-      const window = document.getElementById('ticket-widget-window');
+      const window = this.shadowRoot.getElementById('ticket-widget-window');
       window.classList.toggle('open');
       this.state.isOpen = window.classList.contains('open');
     },
 
     closeWindow() {
-      const window = document.getElementById('ticket-widget-window');
+      const window = this.shadowRoot.getElementById('ticket-widget-window');
       window.classList.remove('open');
       this.state.isOpen = false;
     },
 
     async handleLogin() {
-      const username = document.getElementById('tw-username').value;
-      const password = document.getElementById('tw-password').value;
+      const username = this.shadowRoot.getElementById('tw-username').value;
+      const password = this.shadowRoot.getElementById('tw-password').value;
 
       if (!username || !password) {
         alert('请输入用户名和密码');
@@ -584,9 +635,9 @@
     },
 
     refreshWindow() {
-      const body = document.getElementById('ticket-widget-body');
-      const footer = document.getElementById('ticket-widget-footer');
-      const transferBtn = document.getElementById('ticket-widget-transfer');
+      const body = this.shadowRoot.getElementById('ticket-widget-body');
+      const footer = this.shadowRoot.getElementById('ticket-widget-footer');
+      const transferBtn = this.shadowRoot.getElementById('ticket-widget-transfer');
 
       body.innerHTML = `
         <div class="ticket-widget-message agent">
@@ -615,7 +666,7 @@
     },
 
     async sendMessage() {
-      const input = document.getElementById('ticket-widget-input');
+      const input = this.shadowRoot.getElementById('ticket-widget-input');
       const message = input.value.trim();
 
       if (!message) return;
@@ -673,7 +724,7 @@
                 <div>优先级：${data.ticket_info.priority || 'normal'}</div>
               </div>
             `;
-            const body = document.getElementById('ticket-widget-body');
+            const body = this.shadowRoot.getElementById('ticket-widget-body');
             body.appendChild(ticketInfo);
             body.scrollTop = body.scrollHeight;
           }
@@ -692,7 +743,7 @@
     },
 
     addMessage(content, type, senderName = null) {
-      const body = document.getElementById('ticket-widget-body');
+      const body = this.shadowRoot.getElementById('ticket-widget-body');
       const messageDiv = document.createElement('div');
       messageDiv.className = `ticket-widget-message ${type}`;
 
@@ -714,7 +765,7 @@
     },
 
     showTyping() {
-      const body = document.getElementById('ticket-widget-body');
+      const body = this.shadowRoot.getElementById('ticket-widget-body');
       const typingDiv = document.createElement('div');
       typingDiv.className = 'ticket-widget-typing';
       typingDiv.id = 'ticket-widget-typing';
@@ -728,7 +779,7 @@
     },
 
     hideTyping() {
-      const typing = document.getElementById('ticket-widget-typing');
+      const typing = this.shadowRoot.getElementById('ticket-widget-typing');
       if (typing) {
         typing.remove();
       }
@@ -737,15 +788,35 @@
     connectWebSocket() {
       if (!this.config.websocketUrl || !this.state.token) return;
 
+      // 清理已有的心跳定时器
+      if (this.state.wsHeartbeatInterval) {
+        clearInterval(this.state.wsHeartbeatInterval);
+        this.state.wsHeartbeatInterval = null;
+      }
+      if (this.state.wsHeartbeatTimeout) {
+        clearTimeout(this.state.wsHeartbeatTimeout);
+        this.state.wsHeartbeatTimeout = null;
+      }
+
       try {
         this.state.ws = new WebSocket(`${this.config.websocketUrl}?token=${this.state.token}`);
 
+        // 记录上次收到 pong 的时间
+        this.state.lastPongTime = Date.now();
+
         this.state.ws.onopen = () => {
           console.log('WebSocket connected');
+          // 启动心跳
+          this._startHeartbeat();
         };
 
         this.state.ws.onmessage = (event) => {
           const data = JSON.parse(event.data);
+          // 处理 pong 响应
+          if (data.type === 'pong') {
+            this.state.lastPongTime = Date.now();
+            return;
+          }
           this.handleWebSocketMessage(data);
         };
 
@@ -755,11 +826,38 @@
 
         this.state.ws.onclose = () => {
           console.log('WebSocket closed');
+          // 清理心跳
+          this._stopHeartbeat();
           // 尝试重连
           setTimeout(() => this.connectWebSocket(), 5000);
         };
       } catch (error) {
         console.error('Failed to connect WebSocket:', error);
+      }
+    },
+
+    // 启动心跳
+    _startHeartbeat() {
+      // 每 30 秒发送一次 ping
+      this.state.wsHeartbeatInterval = setInterval(() => {
+        if (this.state.ws && this.state.ws.readyState === WebSocket.OPEN) {
+          this.state.ws.send(JSON.stringify({ type: 'ping' }));
+
+          // 检查是否在 60 秒内收到过 pong
+          const timeSinceLastPong = Date.now() - this.state.lastPongTime;
+          if (timeSinceLastPong > 60000) {
+            console.warn('WebSocket heartbeat timeout, reconnecting...');
+            this.state.ws.close();
+          }
+        }
+      }, 30000);
+    },
+
+    // 停止心跳
+    _stopHeartbeat() {
+      if (this.state.wsHeartbeatInterval) {
+        clearInterval(this.state.wsHeartbeatInterval);
+        this.state.wsHeartbeatInterval = null;
       }
     },
 
@@ -787,7 +885,7 @@
         return;
       }
 
-      const transferBtn = document.getElementById('ticket-widget-transfer');
+      const transferBtn = this.shadowRoot.getElementById('ticket-widget-transfer');
       if (transferBtn) {
         transferBtn.disabled = true;
         transferBtn.textContent = '连接中...';
@@ -856,6 +954,12 @@
 
     // 连接聊天WebSocket
     connectChatWebSocket(sessionId) {
+      // 清理已有的聊天心跳定时器
+      if (this.state.chatWsHeartbeatInterval) {
+        clearInterval(this.state.chatWsHeartbeatInterval);
+        this.state.chatWsHeartbeatInterval = null;
+      }
+
       // WebSocket URL: 如果 websocketUrl 已经是 ws://host/ws，则添加 /chat
       let baseUrl = this.config.websocketUrl;
       if (baseUrl.endsWith('/ws')) {
@@ -866,8 +970,25 @@
       const ws = new WebSocket(wsUrl);
       this.state.chatWs = ws;
 
+      // 记录上次收到 pong 的时间
+      let lastPongTime = Date.now();
+
       ws.onopen = () => {
         console.log('Chat WebSocket connected');
+        // 启动心跳
+        this.state.chatWsHeartbeatInterval = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ping' }));
+
+            // 检查是否在 60 秒内收到过 pong
+            const timeSinceLastPong = Date.now() - lastPongTime;
+            if (timeSinceLastPong > 60000) {
+              console.warn('Chat WebSocket heartbeat timeout, reconnecting...');
+              ws.close();
+            }
+          }
+        }, 30000);
+
         // 如果有 sessionId，主动加入会话
         // 否则等待服务器的 session_rejoined 消息
         if (sessionId) {
@@ -883,6 +1004,11 @@
 
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
+        // 处理 pong 响应
+        if (data.type === 'pong') {
+          lastPongTime = Date.now();
+          return;
+        }
         console.log('Widget received WebSocket message:', data);
         this.handleChatWebSocketMessage(data);
       };
@@ -893,6 +1019,11 @@
 
       ws.onclose = () => {
         console.log('Chat WebSocket closed');
+        // 清理心跳
+        if (this.state.chatWsHeartbeatInterval) {
+          clearInterval(this.state.chatWsHeartbeatInterval);
+          this.state.chatWsHeartbeatInterval = null;
+        }
       };
     },
 
@@ -926,7 +1057,7 @@
           this.addMessage(`客服 ${agentName} 已接入会话`, 'system');
 
           // 隐藏转人工按钮
-          const transferBtn = document.getElementById('ticket-widget-transfer');
+          const transferBtn = this.shadowRoot.getElementById('ticket-widget-transfer');
           if (transferBtn) {
             transferBtn.style.display = 'none';
           }
@@ -940,7 +1071,7 @@
           this.addMessage(data.message || '已重新连接到会话', 'system');
 
           // 隐藏转人工按钮
-          const transferBtnRejoin = document.getElementById('ticket-widget-transfer');
+          const transferBtnRejoin = this.shadowRoot.getElementById('ticket-widget-transfer');
           if (transferBtnRejoin) {
             transferBtnRejoin.style.display = 'none';
           }
@@ -968,7 +1099,7 @@
             this.state.chatWs = null;
           }
           // 显示转人工按钮
-          const transferBtn2 = document.getElementById('ticket-widget-transfer');
+          const transferBtn2 = this.shadowRoot.getElementById('ticket-widget-transfer');
           if (transferBtn2) {
             transferBtn2.style.display = 'block';
             transferBtn2.disabled = false;

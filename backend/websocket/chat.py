@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 
 from models.chat import ChatSession, ChatMessage, AgentStatus
-from db.session import SessionLocal
+from db.session import get_db_context
 
 
 class ChatWebSocketManager:
@@ -51,8 +51,7 @@ class ChatWebSocketManager:
 
     async def auto_join_sessions(self, user_id: str):
         """自动加入用户进行中的会话"""
-        db = SessionLocal()
-        try:
+        with get_db_context() as db:
             # 查询用户进行中的会话
             sessions = db.query(ChatSession).filter(
                 ((ChatSession.customer_id == user_id) | (ChatSession.agent_id == user_id)),
@@ -82,8 +81,6 @@ class ChatWebSocketManager:
                     "message": "已重新连接到会话"
                 })
                 print(f"DEBUG auto-joined user {user_id} to session {session_id} as {role}")
-        finally:
-            db.close()
 
     async def send_to_user(self, user_id: str, message: dict):
         """发送消息给指定用户"""
@@ -136,11 +133,9 @@ class ChatWebSocketManager:
 
     async def broadcast_to_agents(self, message: dict, exclude_user: str = None):
         """广播消息给所有在线客服"""
-        from db.session import SessionLocal
         from models.chat import AgentStatus
 
-        db = SessionLocal()
-        try:
+        with get_db_context() as db:
             # 获取所有在线客服的ID
             agent_statuses = db.query(AgentStatus).filter(
                 AgentStatus.status == "online"
@@ -161,8 +156,6 @@ class ChatWebSocketManager:
                         print(f"DEBUG: Broadcasted to agent {agent_id}")
                     except Exception as e:
                         print(f"Error broadcasting to agent {agent_id}: {e}")
-        finally:
-            db.close()
 
     def join_session(self, session_id: str, user_id: str, role: str):
         """用户加入会话"""
@@ -209,8 +202,7 @@ class ChatWebSocketManager:
             print(f"DEBUG chat_message from {user_id_str}, session {session_id}: {content}")
 
             # 保存到数据库
-            db = SessionLocal()
-            try:
+            with get_db_context() as db:
                 session = db.query(ChatSession).filter(
                     ChatSession.id == session_id
                 ).first()
@@ -260,8 +252,6 @@ class ChatWebSocketManager:
                     await self.send_to_session(session_id, broadcast_msg, exclude_user=user_id_str)
                 else:
                     print(f"DEBUG session {session_id} not found")
-            finally:
-                db.close()
 
         elif msg_type == "typing":
             # 正在输入
@@ -277,8 +267,7 @@ class ChatWebSocketManager:
             session_id = data.get("session_id")
             message_ids = data.get("message_ids", [])
 
-            db = SessionLocal()
-            try:
+            with get_db_context() as db:
                 for msg_id in message_ids:
                     msg = db.query(ChatMessage).filter(
                         ChatMessage.id == msg_id
@@ -294,8 +283,10 @@ class ChatWebSocketManager:
                     "session_id": session_id,
                     "message_ids": message_ids
                 }, exclude_user=user_id_str)
-            finally:
-                db.close()
+
+        elif msg_type == "ping":
+            # 心跳响应
+            await self.send_to_user(user_id_str, {"type": "pong"})
 
 
 # 全局聊天WebSocket管理器

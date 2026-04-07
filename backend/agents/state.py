@@ -1,7 +1,7 @@
 """
 LangGraph 智能体状态定义
 """
-from typing import Annotated, Sequence, TypedDict, Union
+from typing import Annotated, Any, Sequence, TypedDict
 
 from langchain_core.messages import BaseMessage
 
@@ -18,19 +18,19 @@ class AgentState(TypedDict):
     intent: Annotated[str, "识别的意图: create_ticket, query_ticket, process_ticket, summary, general"]
 
     # 工单信息
-    ticket_info: Annotated[dict, "工单相关信息"]
+    ticket_info: Annotated[dict[str, Any], "工单相关信息"]
 
     # 客户信息
-    customer_info: Annotated[dict, "客户相关信息"]
+    customer_info: Annotated[dict[str, Any], "客户相关信息"]
 
     # 用户画像（长期记忆）
-    user_profile: Annotated[dict, "用户画像信息，包含历史工单、统计等"]
+    user_profile: Annotated[dict[str, Any], "用户画像信息，包含历史工单、统计等"]
 
     # 知识库检索结果
-    knowledge_results: Annotated[list, "从知识库检索的结果"]
+    knowledge_results: Annotated[list[Any], "从知识库检索的结果"]
 
     # 工具调用结果
-    tool_results: Annotated[list, "工具调用结果"]
+    tool_results: Annotated[list[Any], "工具调用结果"]
 
     # 当前状态
     current_state: Annotated[str, "当前处理状态"]

@@ -71,7 +71,7 @@ def extract_text_from_file(file_path: str, file_type: str) -> str:
             try:
                 loader = UnstructuredMarkdownLoader(tmp_path)
                 documents = loader.load()
-            except:
+            except Exception:
                 # 如果 UnstructuredMarkdownLoader 失败，用 TextLoader
                 loader = TextLoader(tmp_path, encoding="utf-8")
                 documents = loader.load()
@@ -117,7 +117,7 @@ def extract_text_from_file(file_path: str, file_type: str) -> str:
         # 清理临时文件
         try:
             os.unlink(tmp_path)
-        except:
+        except OSError:
             pass
 
 

@@ -59,7 +59,7 @@ class RedisMemoryStore:
         try:
             self.client.ping()
             return True
-        except:
+        except Exception:
             return False
 
     def _get_key(self, user_id: str, suffix: str = "messages") -> str:
@@ -101,7 +101,7 @@ class RedisMemoryStore:
                 try:
                     msg = json.loads(raw)
                     messages.append(msg)
-                except:
+                except json.JSONDecodeError:
                     continue
             return messages
         except Exception as e:

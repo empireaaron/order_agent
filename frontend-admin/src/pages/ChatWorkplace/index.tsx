@@ -234,7 +234,7 @@ const ChatWorkplace: React.FC = () => {
         setActiveSession(acceptedSession)
         // 加载消息
         const msgResponse = await api.get(`/chat-service/sessions/${sessionId}/messages`)
-        setMessages(msgResponse.data)
+        setMessages(msgResponse.data.items || [])
       }
 
       fetchWaitingQueue()
@@ -249,7 +249,7 @@ const ChatWorkplace: React.FC = () => {
     setLoading(true)
     try {
       const response = await api.get(`/chat-service/sessions/${session.id}/messages`)
-      setMessages(response.data)
+      setMessages(response.data.items || [])
       wsRef.current?.send(JSON.stringify({
         type: 'join_session',
         session_id: session.id,

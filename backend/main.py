@@ -4,7 +4,7 @@
 import os
 import logging
 
-from fastapi import FastAPI, Request, status, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
@@ -80,12 +80,15 @@ def create_app():
         )
 
     # CORS 中间件
+    # 生产环境应通过 CORS_ORIGINS 环境变量限制具体域名
+    # 例如: CORS_ORIGINS="https://admin.example.com,https://widget.example.com"
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # 在生产环境中应该限制具体域名
+        allow_origins=settings.CORS_ORIGINS_LIST,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+        max_age=600,
     )
 
     # API 路由
@@ -107,6 +110,80 @@ def create_app():
 app = create_app()
 
 
+async def authenticate_websocket(websocket: WebSocket) -> tuple[bool, str | None]:
+    """
+    验证 WebSocket 连接的 Token
+    返回: (是否验证成功, 用户ID)
+    """
+    token = websocket.query_params.get("token")
+
+    if not token:
+        await websocket.close(code=4001, reason="Token required")
+        return False, None
+
+    try:
+        payload = decode_token(token)
+        if not payload:
+            await websocket.close(code=4001, reason="Invalid token")
+            return False, None
+
+        user_id = payload.get("sub")
+        if not user_id:
+            await websocket.close(code=4001, reason="Invalid token payload")
+            return False, None
+
+        return True, user_id
+    except Exception as e:
+        logger.error(f"WebSocket authentication error: {e}")
+        await websocket.close(code=4001, reason="Authentication failed")
+        return False, None
+
+
+async def handle_websocket_connection(
+    websocket: WebSocket,
+    manager,
+    user_id: str,
+    message_handler=None
+):
+    """
+    通用 WebSocket 连接处理
+    manager: WebSocket 管理器实例
+    message_handler: 可选的消息处理函数，接收 (user_id, data) 参数
+    """
+    await manager.connect(websocket, user_id)
+    await websocket.send_json({"type": "connected", "user_id": user_id})
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+
+            if message_handler:
+                await message_handler(user_id, data)
+            else:
+                # 默认消息处理
+                msg_type = data.get("type")
+
+                if msg_type == "ping":
+                    await websocket.send_json({"type": "pong"})
+                elif msg_type == "subscribe_ticket":
+                    ticket_id = data.get("ticket_id")
+                    await websocket.send_json({
+                        "type": "subscribed",
+                        "ticket_id": ticket_id
+                    })
+                else:
+                    await manager.send_personal_message(
+                        user_id,
+                        {"type": "echo", "data": data}
+                    )
+
+    except WebSocketDisconnect:
+        manager.disconnect(user_id)
+    except Exception as e:
+        logger.error(f"WebSocket error for user {user_id}: {e}")
+        manager.disconnect(user_id)
+
+
 @app.get("/")
 async def root():
     """根路径"""
@@ -124,115 +201,36 @@ async def health_check():
 
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket, token: str = Query(None)):
+async def websocket_endpoint(websocket: WebSocket):
     """
     WebSocket 连接端点
     连接时需要提供 JWT token 参数: ws://localhost:8000/ws?token=xxx
     """
-    # 先验证 token，然后再接受连接
-    if not token:
-        await websocket.close(code=4001, reason="Token required")
+    authenticated, user_id = await authenticate_websocket(websocket)
+    if not authenticated:
         return
 
-    try:
-        # 验证 token
-        payload = decode_token(token)
-        if not payload:
-            await websocket.close(code=4001, reason="Invalid token")
-            return
-
-        user_id = payload.get("sub")
-        if not user_id:
-            await websocket.close(code=4001, reason="Invalid token payload")
-            return
-
-        # 验证通过后才接受连接
-        await websocket.accept()
-
-        # 建立连接
-        await ws_manager.connect(websocket, user_id)
-        await websocket.send_json({"type": "connected", "user_id": user_id})
-
-        try:
-            # 保持连接并处理消息
-            while True:
-                data = await websocket.receive_json()
-
-                # 处理不同类型的消息
-                msg_type = data.get("type")
-
-                if msg_type == "ping":
-                    await websocket.send_json({"type": "pong"})
-
-                elif msg_type == "subscribe_ticket":
-                    ticket_id = data.get("ticket_id")
-                    await websocket.send_json({
-                        "type": "subscribed",
-                        "ticket_id": ticket_id
-                    })
-
-                else:
-                    # 广播消息给该用户的其他连接
-                    await ws_manager.send_personal_message(
-                        user_id,
-                        {"type": "echo", "data": data}
-                    )
-
-        except WebSocketDisconnect:
-            ws_manager.disconnect(user_id)
-        except Exception as e:
-            logger.error(f"WebSocket error for user {user_id}: {e}")
-            ws_manager.disconnect(user_id)
-
-    except Exception as e:
-        logger.error(f"WebSocket connection error: {e}")
-        await websocket.close(code=4001, reason="Authentication failed")
+    await websocket.accept()
+    await handle_websocket_connection(websocket, ws_manager, user_id)
 
 
 @app.websocket("/ws/chat")
-async def chat_websocket_endpoint(websocket: WebSocket, token: str = Query(None)):
+async def chat_websocket_endpoint(websocket: WebSocket):
     """
     实时聊天 WebSocket 端点
     连接时需要提供 JWT token 参数: ws://localhost:8000/ws/chat?token=xxx
     """
-    if not token:
-        await websocket.close(code=4001, reason="Token required")
+    authenticated, user_id = await authenticate_websocket(websocket)
+    if not authenticated:
         return
 
-    try:
-        # 验证 token
-        payload = decode_token(token)
-        if not payload:
-            await websocket.close(code=4001, reason="Invalid token")
-            return
-
-        user_id = payload.get("sub")
-        if not user_id:
-            await websocket.close(code=4001, reason="Invalid token payload")
-            return
-
-        # 验证通过后才接受连接
-        await websocket.accept()
-
-        # 建立连接
-        await chat_ws_manager.connect(websocket, user_id)
-        await websocket.send_json({"type": "connected", "user_id": user_id})
-
-        try:
-            # 保持连接并处理消息
-            while True:
-                data = await websocket.receive_json()
-                await chat_ws_manager.handle_message(user_id, data)
-
-        except WebSocketDisconnect:
-            chat_ws_manager.disconnect(user_id)
-        except Exception as e:
-            logger.error(f"Chat WebSocket error for user {user_id}: {e}")
-            chat_ws_manager.disconnect(user_id)
-
-    except Exception as e:
-        logger.error(f"Chat WebSocket connection error: {e}")
-        await websocket.close(code=4001, reason="Authentication failed")
+    await websocket.accept()
+    await handle_websocket_connection(
+        websocket,
+        chat_ws_manager,
+        user_id,
+        message_handler=chat_ws_manager.handle_message
+    )
 
 
 if __name__ == "__main__":

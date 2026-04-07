@@ -67,6 +67,16 @@ class Settings(BaseSettings):
     LANGCHAIN_TRACING_V2: bool = Field(default=False)
     LANGCHAIN_PROJECT: str = Field(default="ticket-bot")
 
+    # CORS 配置
+    CORS_ORIGINS: str = Field(default="*")  # 生产环境应配置具体域名，如 "https://admin.example.com,https://widget.example.com"
+
+    @property
+    def CORS_ORIGINS_LIST(self) -> list:
+        """解析 CORS_ORIGINS 为列表"""
+        if not self.CORS_ORIGINS or self.CORS_ORIGINS == "*":
+            return ["*"]
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",")]
+
     # JWT 配置
     JWT_SECRET_KEY: str = Field(default="your-secret-key-change-in-production-use-env")
     JWT_ALGORITHM: str = Field(default="HS256")
@@ -93,6 +103,12 @@ class Settings(BaseSettings):
     REDIS_DB: int = Field(default=0)
     REDIS_PASSWORD: str = Field(default="")
     REDIS_ENABLED: bool = Field(default=False)  # 是否启用 Redis
+
+    # 短期记忆配置
+    STM_MAX_MESSAGES: int = Field(default=20)        # 每个用户最多保留消息数（含摘要）
+    STM_BUFFER_SIZE: int = Field(default=6)          # 保留最近 N 条消息原文
+    STM_SUMMARY_TRIGGER: int = Field(default=10)     # 超过 N 条时触发摘要
+    STM_EXPIRE_SECONDS: int = Field(default=1800)    # 记忆过期时间（秒）
 
     @property
     def llm(self):

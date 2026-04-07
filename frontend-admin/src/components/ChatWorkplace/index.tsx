@@ -168,7 +168,7 @@ const ChatWorkplace: React.FC = () => {
     setLoading(true)
     try {
       const response = await api.get(`/chat-service/sessions/${session.id}/messages`)
-      setMessages(response.data)
+      setMessages(response.data.items || [])
       // 加入WebSocket会话
       wsRef.current?.send(JSON.stringify({
         type: 'join_session',

@@ -10,20 +10,25 @@
 - 对早期消息自动生成摘要
 - 适合长对话场景
 """
+import threading
 import time
 from collections import defaultdict
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 
+from config import settings
+
 
 class ShortTermMemory:
-    """短期记忆管理器 - 按用户存储对话历史，支持自动摘要，支持多后端"""
+    """短期记忆管理器 - 按用户存储对话历史，支持自动摘要，支持多后端（线程安全单例）"""
 
     _instance = None
+    _lock = threading.Lock()
+    _initialized = False
 
     def __new__(cls, backend: str = "auto"):
-        """单例模式
+        """线程安全单例模式
 
         Args:
             backend: 存储后端 ("auto", "memory", "redis")
@@ -32,8 +37,12 @@ class ShortTermMemory:
                 - "redis": 强制使用 Redis
         """
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._init_storage(backend)
+            with cls._lock:
+                # 双重检查锁定
+                if cls._instance is None:
+                    instance = super().__new__(cls)
+                    instance._init_storage(backend)
+                    cls._instance = instance
         return cls._instance
 
     def _init_storage(self, backend: str = "auto"):
@@ -42,11 +51,11 @@ class ShortTermMemory:
         self._redis_storage = None
         self._backend = "memory"  # 默认后端
 
-        # 配置
-        self.max_messages = 20  # 每个用户最多保留20条消息（含摘要）
-        self.buffer_size = 6    # 保留最近6条消息原文
-        self.summary_trigger = 10  # 超过10条时触发摘要
-        self.expire_seconds = 1800  # 30分钟过期
+        # 配置（从 settings 读取，支持环境变量配置）
+        self.max_messages = settings.STM_MAX_MESSAGES
+        self.buffer_size = settings.STM_BUFFER_SIZE
+        self.summary_trigger = settings.STM_SUMMARY_TRIGGER
+        self.expire_seconds = settings.STM_EXPIRE_SECONDS
 
         # 选择后端
         if backend == "auto":

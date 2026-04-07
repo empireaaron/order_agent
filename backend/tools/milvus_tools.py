@@ -3,6 +3,7 @@ Milvus 工具函数 - 知识库检索
 """
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any
 
 from db.milvus import milvus_manager
@@ -150,6 +151,57 @@ def insert_document_to_kb(
     return milvus_manager.insert(collection_name=collection_name, data=data)
 
 
+def search_kb_with_vector(
+    query_vector: List[float],
+    collection_name: str,
+    top_k: int = 3,
+    similarity_threshold: float = 0.6,
+    kb_name: str = "unknown"
+) -> tuple[str, list]:
+    """
+    使用预计算的向量在知识库中搜索（避免重复生成 embedding）
+
+    Args:
+        query_vector: 查询向量
+        collection_name: 集合名称
+        top_k: 相关块数量
+        similarity_threshold: 相似度阈值
+        kb_name: 知识库名称（用于调试）
+
+    Returns:
+        (检索到的上下文文本, 原始结果列表)
+    """
+    results = milvus_manager.search(
+        collection_name=collection_name,
+        vector=query_vector,
+        limit=top_k,
+        score_threshold=similarity_threshold
+    )
+
+    if not results:
+        return "", []
+
+    # 按相似度排序（降序）
+    results = sorted(results, key=lambda x: x.get('similarity', 0), reverse=True)
+
+    # 提取内容，添加相似度信息用于调试
+    context_parts = []
+    for r in results:
+        content = r.get("metadata", {}).get("content", "")
+        similarity = r.get('similarity', 0)
+        if content:
+            context_parts.append(content)
+            print(f"[DEBUG] [{kb_name}] 相似度: {similarity:.3f}: {content[:80]}...")
+
+    # 拼接结果，限制总长度
+    MAX_CONTEXT_LENGTH = 2000
+    context = "\n\n".join(context_parts)
+    if len(context) > MAX_CONTEXT_LENGTH:
+        context = context[:MAX_CONTEXT_LENGTH] + "\n...[内容已截断]"
+
+    return context, results
+
+
 def search_kb(
     question: str,
     collection_name: str,
@@ -157,7 +209,7 @@ def search_kb(
     similarity_threshold: float = 0.6
 ) -> tuple[str, list]:
     """
-    在知识库中搜索答案并返回上下文
+    在知识库中搜索答案并返回上下文（兼容旧接口）
 
     Args:
         question: 用户问题
@@ -197,3 +249,49 @@ def search_kb(
         context = context[:MAX_CONTEXT_LENGTH] + "\n...[内容已截断]"
 
     return context, results
+
+
+def search_kb_batch(
+    query_vector: List[float],
+    knowledge_bases: List[Any],
+    top_k: int = 3,
+    similarity_threshold: float = 0.5
+) -> List[Dict[str, Any]]:
+    """
+    使用预计算向量并行搜索多个知识库
+
+    Args:
+        query_vector: 预计算的查询向量
+        knowledge_bases: 知识库列表（KnowledgeBase 对象列表）
+        top_k: 每个知识库返回的结果数
+        similarity_threshold: 相似度阈值
+
+    Returns:
+        合并后的搜索结果列表（带 kb_name 标记）
+    """
+    all_results = []
+
+    def search_single(kb):
+        try:
+            results = milvus_manager.search(
+                collection_name=kb.collection_name,
+                vector=query_vector,
+                limit=top_k,
+                score_threshold=similarity_threshold
+            )
+            # 添加知识库名称到结果中
+            for r in results:
+                r['kb_name'] = kb.name
+            return results
+        except Exception as e:
+            print(f"[ERROR] 搜索知识库 {kb.name} 失败: {e}")
+            return []
+
+    # 并行查询所有知识库
+    with ThreadPoolExecutor(max_workers=min(len(knowledge_bases), 10)) as executor:
+        future_to_kb = {executor.submit(search_single, kb): kb for kb in knowledge_bases}
+        for future in as_completed(future_to_kb):
+            results = future.result()
+            all_results.extend(results)
+
+    return all_results

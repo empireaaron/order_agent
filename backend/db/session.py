@@ -1,9 +1,10 @@
 """
 MySQL 数据库会话管理
 """
+from contextlib import contextmanager
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
 
 try:
     from config import settings
@@ -32,7 +33,17 @@ Base = declarative_base()
 
 
 def get_db():
-    """获取数据库会话"""
+    """获取数据库会话（用于 FastAPI 依赖注入）"""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@contextmanager
+def get_db_context() -> Session:
+    """获取数据库会话上下文管理器（用于非路由代码）"""
     db = SessionLocal()
     try:
         yield db
