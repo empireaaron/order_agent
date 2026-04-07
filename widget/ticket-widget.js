@@ -764,6 +764,67 @@
       body.scrollTop = body.scrollHeight;
     },
 
+    // 加载聊天历史消息
+    async loadChatHistory(sessionId) {
+      try {
+        console.log('Loading chat history for session:', sessionId);
+        const response = await this.apiRequest(
+          `${this.config.apiUrl}/chat-service/sessions/${sessionId}/messages?page=1&page_size=50`
+        );
+
+        if (!response.ok) {
+          console.error('Failed to load chat history:', response.status);
+          return;
+        }
+
+        const data = await response.json();
+        console.log('Loaded chat history:', data);
+
+        if (data.items && data.items.length > 0) {
+          // 清空当前消息区域（保留系统提示）
+          const body = this.shadowRoot.getElementById('ticket-widget-body');
+          // 找到系统提示后的位置，或者清空所有消息
+          body.innerHTML = '';
+
+          // 添加历史消息
+          data.items.forEach(msg => {
+            let msgType;
+            let senderName = null;
+
+            if (msg.sender_type === 'agent') {
+              msgType = 'human';
+              senderName = msg.sender?.name || '客服';
+            } else if (msg.sender_type === 'customer') {
+              msgType = 'user';
+            } else {
+              msgType = 'system';
+              senderName = msg.sender?.name || '系统';
+            }
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `ticket-widget-message ${msgType}`;
+
+            const formattedContent = this.escapeHtml(msg.content).replace(/\n/g, '<br>');
+            let senderHtml = '';
+            if (senderName && msgType !== 'user') {
+              senderHtml = `<div class="ticket-widget-sender">${this.escapeHtml(senderName)}</div>`;
+            }
+
+            messageDiv.innerHTML = `
+              ${senderHtml}
+              <div class="ticket-widget-message-content">${formattedContent}</div>
+            `;
+            body.appendChild(messageDiv);
+          });
+
+          // 滚动到底部
+          body.scrollTop = body.scrollHeight;
+        }
+      } catch (error) {
+        console.error('Error loading chat history:', error);
+      }
+    },
+
     showTyping() {
       const body = this.shadowRoot.getElementById('ticket-widget-body');
       const typingDiv = document.createElement('div');
@@ -997,6 +1058,8 @@
             session_id: sessionId,
             role: 'customer'
           }));
+          // 加载历史消息
+          this.loadChatHistory(sessionId);
         } else {
           console.log('No sessionId provided, waiting for session_rejoined from server');
         }
@@ -1061,10 +1124,36 @@
           if (transferBtn) {
             transferBtn.style.display = 'none';
           }
+
+          // 加载历史消息
+          this.loadChatHistory(data.session_id);
           break;
         case 'session_rejoined':
           // 重新加入之前的会话
-          console.log('Rejoined session:', data.session_id, 'as', data.role);
+          console.log('Rejoined session:', data.session_id, 'as', data.role, 'status:', data.status);
+
+          // 注意：已关闭的会话应该走 session_history，这里处理进行中的会话
+          if (data.status === 'closed') {
+            console.warn('Unexpected: session_rejoined with closed status, switching to AI mode');
+            this.state.chatMode = 'ai';
+            this.state.chatSessionId = null;
+            this.state.isWaitingForAgent = false;
+            this.addMessage(data.message || '会话已结束，已回到AI模式', 'system');
+            this.loadChatHistory(data.session_id);
+            // 恢复输入框
+            const closedInput = this.shadowRoot.getElementById('ticket-widget-input');
+            const closedSendBtn = this.shadowRoot.getElementById('ticket-widget-send');
+            if (closedInput) {
+              closedInput.disabled = false;
+              closedInput.placeholder = '输入消息...';
+            }
+            if (closedSendBtn) {
+              closedSendBtn.disabled = false;
+            }
+            break;
+          }
+
+          // 会话进行中，正常恢复
           this.state.chatMode = 'human';
           this.state.chatSessionId = data.session_id;
           this.state.isWaitingForAgent = false;
@@ -1076,6 +1165,9 @@
             transferBtnRejoin.style.display = 'none';
           }
 
+          // 加载历史消息
+          this.loadChatHistory(data.session_id);
+
           // 确保 WebSocket 连接已建立，加入会话
           if (this.state.chatWs && this.state.chatWs.readyState === WebSocket.OPEN) {
             this.state.chatWs.send(JSON.stringify({
@@ -1086,6 +1178,46 @@
           } else {
             // 如果聊天 WebSocket 未连接，重新连接
             this.connectChatWebSocket(data.session_id);
+          }
+          break;
+        case 'session_history':
+          // 已关闭会话的历史记录 - 回到AI模式
+          console.log('Session history, switching back to AI mode:', data.session_id);
+          this.state.chatMode = 'ai'; // 回到AI模式
+          this.state.chatSessionId = null; // 不保存会话ID
+          this.state.isWaitingForAgent = false;
+
+          // 添加历史记录提示
+          this.addMessage('━━━━━━━━━━━━━━━━━━━━', 'system');
+          this.addMessage(data.message || '会话已结束，以下是历史记录', 'system');
+          this.addMessage('━━━━━━━━━━━━━━━━━━━━', 'system');
+
+          this.loadChatHistory(data.session_id);
+
+          // 恢复AI模式提示
+          setTimeout(() => {
+            this.addMessage('您可以继续向我提问~', 'system');
+          }, 500);
+
+          // 恢复输入框和发送按钮
+          const historyInput = this.shadowRoot.getElementById('ticket-widget-input');
+          const historySendBtn = this.shadowRoot.getElementById('ticket-widget-send');
+          if (historyInput) {
+            historyInput.disabled = false;
+            historyInput.placeholder = '输入消息...';
+            historyInput.style.backgroundColor = '';
+          }
+          if (historySendBtn) {
+            historySendBtn.disabled = false;
+            historySendBtn.style.opacity = '1';
+          }
+
+          // 显示转人工按钮
+          const historyTransferBtn = this.shadowRoot.getElementById('ticket-widget-transfer');
+          if (historyTransferBtn) {
+            historyTransferBtn.style.display = 'block';
+            historyTransferBtn.disabled = false;
+            historyTransferBtn.textContent = '转人工';
           }
           break;
         case 'session_closed':

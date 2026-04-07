@@ -53,17 +53,36 @@ class ChatWebSocketManager:
         logger.info(f"Chat user disconnected, remaining connections: {len(self.user_connections)}")
 
     async def auto_join_sessions(self, user_id: str):
-        """自动加入用户进行中的会话"""
+        """自动加入用户进行中的会话（包括最近关闭的）"""
+        from datetime import datetime, timedelta
+
         with get_db_context() as db:
-            # 查询用户进行中的会话
+            # 查询用户进行中的会话，以及24小时内关闭的会话
+            cutoff_time = datetime.utcnow() - timedelta(hours=24)
             sessions = db.query(ChatSession).filter(
                 ((ChatSession.customer_id == user_id) | (ChatSession.agent_id == user_id)),
-                ChatSession.status == "connected"
+                ((ChatSession.status == "connected") |
+                 ((ChatSession.status == "closed") & (ChatSession.closed_at >= cutoff_time)))
             ).all()
 
-            logger.debug(f"auto_join_sessions: found {len(sessions)} active sessions")
+            logger.info(f"auto_join_sessions: user={user_id}, found {len(sessions)} sessions")
+            for s in sessions:
+                logger.info(f"  session {s.id}: status={s.status}, closed_at={s.closed_at}")
+
+            # 优先处理进行中的会话，如果没有则处理最近关闭的会话
+            active_session = None
+            closed_session = None
 
             for session in sessions:
+                if session.status == "connected":
+                    active_session = session
+                    break  # 找到进行中的会话，立即停止
+                elif session.status == "closed" and closed_session is None:
+                    closed_session = session  # 记录第一个关闭的会话
+
+            # 处理选中的会话
+            session = active_session or closed_session
+            if session:
                 session_id = str(session.id)
                 # 确定用户角色
                 if str(session.customer_id) == user_id:
@@ -71,19 +90,33 @@ class ChatWebSocketManager:
                 elif str(session.agent_id) == user_id:
                     role = "agent"
                 else:
-                    continue
+                    return
 
-                # 加入会话
-                self.join_session(session_id, user_id, role)
+                # 根据会话状态处理
+                logger.info(f"Processing session {session_id}, status={session.status}, role={role}")
+                if session.status == "closed":
+                    # 已关闭的会话：不加入，只通知客户端加载历史
+                    await self.send_to_user(user_id, {
+                        "type": "session_history",
+                        "session_id": session_id,
+                        "role": role,
+                        "status": "closed",
+                        "message": "会话已结束，以下是历史记录"
+                    })
+                    logger.info(f"Sent session_history for closed session {session_id}")
+                else:
+                    # 进行中的会话：加入会话
+                    self.join_session(session_id, user_id, role)
 
-                # 通知用户已重新加入会话
-                await self.send_to_user(user_id, {
-                    "type": "session_rejoined",
-                    "session_id": session_id,
-                    "role": role,
-                    "message": "已重新连接到会话"
-                })
-                logger.debug(f"auto-joined user to session {session_id}")
+                    # 通知用户已重新加入会话
+                    await self.send_to_user(user_id, {
+                        "type": "session_rejoined",
+                        "session_id": session_id,
+                        "role": role,
+                        "status": session.status,
+                        "message": "已重新连接到会话"
+                    })
+                    logger.info(f"Sent session_rejoined for active session {session_id}")
 
     async def send_to_user(self, user_id: str, message: dict):
         """发送消息给指定用户"""

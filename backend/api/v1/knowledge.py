@@ -106,7 +106,7 @@ def upload_document(
         raise HTTPException(status_code=403, detail="Not allowed to add documents to this knowledge base")
 
     # 限制文件类型
-    allowed_types = [".txt", ".pdf", ".docx", ".md", ".html"]
+    allowed_types = [".txt", ".pdf", ".docx", ".doc", ".md", ".html"]
     file_ext = "." + file.filename.split(".")[-1].lower()
     if file_ext not in allowed_types:
         raise HTTPException(status_code=400, detail=f"File type not allowed. Allowed types: {allowed_types}")
