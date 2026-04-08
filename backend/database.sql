@@ -181,20 +181,31 @@ CREATE TABLE IF NOT EXISTS `chat_sessions` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='聊天会话表';
 
 -- 聊天记录表
+-- sender_id 使用规则:
+--   - AI 消息：sender_id = NULL
+--   - 客户消息：sender_id = 客户ID
+--   - 客服消息：sender_id = 客服ID
+--   - 系统消息：sender_id = NULL
+-- customer_id: 统一设置为该消息所属的客户ID，用于简化历史消息查询
 CREATE TABLE IF NOT EXISTS `chat_messages` (
     `id` VARCHAR(36) PRIMARY KEY COMMENT '消息ID (UUID)',
-    `session_id` VARCHAR(36) NOT NULL COMMENT '会话ID',
-    `sender_id` VARCHAR(36) NOT NULL COMMENT '发送者ID',
-    `sender_type` VARCHAR(20) NOT NULL COMMENT '发送者类型: customer/agent/system',
+    `session_id` VARCHAR(36) DEFAULT NULL COMMENT '会话ID (AI聊天时为NULL)',
+    `sender_id` VARCHAR(36) DEFAULT NULL COMMENT '发送者ID (AI/系统消息为NULL)',
+    `sender_type` VARCHAR(20) NOT NULL COMMENT '发送者类型: customer/agent/system/ai',
     `content` TEXT NOT NULL COMMENT '消息内容',
     `message_type` VARCHAR(20) DEFAULT 'text' COMMENT '消息类型: text/image/file/system',
+    `customer_id` VARCHAR(36) DEFAULT NULL COMMENT '客户ID (用于简化历史消息查询)',
     `is_read` TINYINT(1) DEFAULT 0 COMMENT '是否已读',
     `read_at` DATETIME DEFAULT NULL COMMENT '阅读时间',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     INDEX `idx_session_id` (`session_id`),
     INDEX `idx_created_at` (`created_at`),
+    INDEX `idx_sender_id` (`sender_id`),
+    INDEX `idx_customer_id` (`customer_id`),
+    INDEX `idx_sender_type` (`sender_type`),
     CONSTRAINT `fk_chat_messages_session` FOREIGN KEY (`session_id`) REFERENCES `chat_sessions` (`id`) ON DELETE CASCADE,
-    CONSTRAINT `fk_chat_messages_sender` FOREIGN KEY (`sender_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+    CONSTRAINT `fk_chat_messages_sender` FOREIGN KEY (`sender_id`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+    CONSTRAINT `fk_chat_messages_customer` FOREIGN KEY (`customer_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='聊天记录表';
 
 -- 客服在线状态表

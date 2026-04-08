@@ -53,11 +53,14 @@ class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
-    session_id = Column(String(36), ForeignKey("chat_sessions.id"), nullable=False)
-    sender_id = Column(String(36), ForeignKey("users.id"), nullable=False)
-    sender_type = Column(String(20), nullable=False, comment="发送者类型: customer/agent/system")
+    session_id = Column(String(36), ForeignKey("chat_sessions.id"), nullable=True, comment="会话ID，AI聊天时为空")
+    sender_id = Column(String(36), ForeignKey("users.id"), nullable=True, comment="发送者ID: AI/系统消息为NULL")
+    sender_type = Column(String(20), nullable=False, comment="发送者类型: customer/agent/system/ai")
     content = Column(Text, nullable=False)
     message_type = Column(String(20), default="text", comment="消息类型: text/image/file/system")
+
+    # 客户ID - 用于简化历史消息查询
+    customer_id = Column(String(36), ForeignKey("users.id"), nullable=True, comment="客户ID: 标识该消息所属的客户")
 
     # 是否已读
     is_read = Column(String(1), default="0", comment="是否已读: 0/1")
@@ -67,12 +70,16 @@ class ChatMessage(Base):
 
     # 关联
     session = relationship("ChatSession", back_populates="messages")
-    sender = relationship("User")
+    sender = relationship("User", foreign_keys=[sender_id])
+    customer = relationship("User", foreign_keys=[customer_id])
 
     # 索引
     __table_args__ = (
         Index('ix_chat_messages_session_id', 'session_id'),
         Index('ix_chat_messages_created_at', 'created_at'),
+        Index('ix_chat_messages_sender_id', 'sender_id'),
+        Index('ix_chat_messages_customer_id', 'customer_id'),
+        Index('ix_chat_messages_sender_type', 'sender_type'),
     )
 
 

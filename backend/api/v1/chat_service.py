@@ -3,8 +3,9 @@
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 import asyncio
 
 from db.session import get_db
@@ -122,6 +123,7 @@ def create_chat_session(
     """
     try:
         print(f"DEBUG: Creating chat session for user {current_user.id}")
+        print(f"DEBUG: Request body: {request}")
 
         # 检查是否已有进行中的会话
         existing = db.query(ChatSession).filter(
@@ -132,6 +134,8 @@ def create_chat_session(
         print(f"DEBUG: Existing session check: {existing}")
 
         if existing:
+            print(f"DEBUG: Found existing session {existing.id}, status={existing.status}")
+
             # 如果已有 connected 状态的会话，直接返回
             if existing.status == "connected":
                 return {
@@ -180,9 +184,10 @@ def create_chat_session(
             # 发送系统消息
             system_msg = ChatMessage(
                 session_id=session.id,
-                sender_id=assigned_agent.agent_id,
+                sender_id=None,  # 系统消息sender_id为NULL
                 sender_type="system",
-                content=f"客服 {assigned_agent.agent.username} 已接入会话"
+                content=f"客服 {assigned_agent.agent.username} 已接入会话",
+                customer_id=session.customer_id  # 设置customer_id方便查询
             )
             db.add(system_msg)
             db.commit()
@@ -324,9 +329,10 @@ def accept_chat_session(
     # 发送系统消息
     system_msg = ChatMessage(
         session_id=session.id,
-        sender_id=current_user.id,
+        sender_id=None,  # 系统消息sender_id为NULL
         sender_type="system",
-        content=f"客服 {current_user.full_name or current_user.username} 已接入会话"
+        content=f"客服 {current_user.full_name or current_user.username} 已接入会话",
+        customer_id=session.customer_id  # 设置customer_id方便查询
     )
     db.add(system_msg)
     db.commit()
@@ -413,6 +419,11 @@ def send_chat_message(
 ):
     """
     发送聊天消息
+    sender_id 规则:
+    - 客户消息: sender_id = 客户ID
+    - 客服消息: sender_id = 客服ID
+    - AI/系统消息: sender_id = NULL
+    customer_id 始终设置为该会话的客户ID
     """
     session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if not session:
@@ -424,13 +435,14 @@ def send_chat_message(
 
     sender_type = "agent" if current_user.role.code in ["admin", "agent"] else "customer"
 
-    # 创建消息
+    # 创建消息 - 设置 customer_id 为该会话的客户ID
     chat_msg = ChatMessage(
         session_id=session_id,
         sender_id=current_user.id,
         sender_type=sender_type,
         content=message.get("content", ""),
-        message_type=message.get("type", "text")
+        message_type=message.get("type", "text"),
+        customer_id=session.customer_id  # 统一设置customer_id方便查询
     )
     db.add(chat_msg)
 
@@ -463,11 +475,15 @@ def get_chat_messages(
     session_id: str,
     page: int = Query(1, ge=1, description="页码，从1开始"),
     page_size: int = Query(20, ge=1, le=100, description="每页消息数，最大100"),
+    include_ai_history: bool = Query(True, description="是否包含AI聊天历史"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
     获取会话消息历史（分页加载）
+    如果 include_ai_history=True，同时返回该客户与AI的历史聊天记录
+
+    查询优化：使用 customer_id 字段直接查询，无需复杂关联
     """
     session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if not session:
@@ -476,20 +492,51 @@ def get_chat_messages(
     if current_user.id not in [session.customer_id, session.agent_id]:
         raise HTTPException(status_code=403, detail="Not allowed")
 
-    # 分页查询消息
-    offset = (page - 1) * page_size
-    messages_query = db.query(ChatMessage).filter(
-        ChatMessage.session_id == session_id
-    ).order_by(ChatMessage.created_at.desc())  # 降序获取最新消息
+    # 获取客户ID（当前用户可能是客户或客服）
+    customer_id = session.customer_id
 
-    # 获取总数
-    total = messages_query.count()
+    if include_ai_history:
+        # 简化查询：使用 customer_id 字段直接查询
+        # 1. AI聊天阶段：customer_id = 客户ID 且 session_id IS NULL
+        # 2. 客服聊天阶段：该客户的所有会话消息
 
-    # 分页获取消息
-    messages = messages_query.offset(offset).limit(page_size).all()
+        # 先获取该客户的所有会话ID
+        customer_session_ids = db.query(ChatSession.id).filter(
+            ChatSession.customer_id == customer_id
+        ).all()
+        customer_session_ids = [s[0] for s in customer_session_ids]
 
-    # 反转回正序（时间从旧到新）
-    messages.reverse()
+        # 构建查询 - 简化版：使用 customer_id
+        query = db.query(ChatMessage).filter(
+            or_(
+                # AI聊天阶段：该客户的所有消息（通过customer_id关联）
+                and_(
+                    ChatMessage.customer_id == customer_id,
+                    ChatMessage.session_id.is_(None)
+                ),
+                # 客服聊天阶段：该客户的所有会话消息
+                ChatMessage.session_id.in_(customer_session_ids) if customer_session_ids else False
+            )
+        )
+
+        total = query.count()
+        offset = (page - 1) * page_size
+        messages = query.order_by(ChatMessage.created_at.asc()).offset(offset).limit(page_size).all()
+    else:
+        # 只查询当前会话的消息
+        total = db.query(ChatMessage).filter(
+            ChatMessage.session_id == session_id
+        ).count()
+
+        offset = (page - 1) * page_size
+
+        messages = db.query(ChatMessage).filter(
+            ChatMessage.session_id == session_id
+        ).order_by(ChatMessage.created_at.asc()).offset(offset).limit(page_size).all()
+
+    print(f"DEBUG: get_chat_messages: session_id={session_id}, page={page}, total={total}, returned={len(messages)}, include_ai={include_ai_history}")
+    for m in messages[:3]:
+        print(f"DEBUG:   msg: sender_type={m.sender_type}, session={m.session_id}, sender={m.sender_id}, content={m.content[:30]}...")
 
     return {
         "items": [{
@@ -498,8 +545,8 @@ def get_chat_messages(
             "sender_type": m.sender_type,
             "sender": {
                 "id": m.sender_id,
-                "name": m.sender.full_name or m.sender.username
-            } if m.sender else None,
+                "name": m.sender.full_name or m.sender.username if m.sender else None
+            } if m.sender_id else None,
             "is_read": m.is_read == "1",
             "created_at": m.created_at.isoformat()
         } for m in messages],
@@ -648,3 +695,104 @@ def auto_assign_agent(db: Session) -> Optional[AgentStatus]:
 
     print(f"DEBUG: No available agent found among {len(agents)} online agents")
     return None
+
+
+@router.post("/ai-messages")
+def save_ai_message(
+    request: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    保存AI聊天消息（转人工前的AI对话记录）
+    sender_id 使用规则：
+    - 客户消息：sender_id = 客户ID
+    - AI消息：sender_id = NULL
+    - customer_id = 客户ID（用于简化查询）
+    """
+    try:
+        role = request.get("role")  # 'customer' 或 'ai'
+        content = request.get("content")
+
+        print(f"DEBUG: save_ai_message called: role={role}, content={content[:50]}...")
+
+        if not role or not content:
+            raise HTTPException(status_code=400, detail="Missing role or content")
+
+        # 保存消息，session_id 为空表示这是AI聊天（未转人工）
+        # sender_id 规则：客户消息用客户ID，AI消息用NULL
+        msg = ChatMessage(
+            session_id=None,
+            sender_id=current_user.id if role == "customer" else None,
+            sender_type=role,
+            content=content,
+            message_type="text",
+            customer_id=current_user.id  # 统一设置customer_id方便查询
+        )
+        db.add(msg)
+        db.commit()
+        db.refresh(msg)
+
+        print(f"DEBUG: Saved AI message: id={msg.id}, role={role}, sender={msg.sender_id}, customer={msg.customer_id}")
+
+        return {
+            "id": msg.id,
+            "role": role,
+            "content": content,
+            "created_at": msg.created_at.isoformat()
+        }
+    except Exception as e:
+        import traceback
+        print(f"Error saving AI message: {e}")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"保存消息失败: {str(e)}")
+
+
+@router.get("/ai-messages")
+def get_ai_messages(
+    page: int = Query(1, ge=1, description="页码，从1开始"),
+    page_size: int = Query(20, ge=1, le=100, description="每页消息数，最大100"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    获取当前用户的所有AI聊天历史（包括已转人工和未转人工的）
+    优化：使用 customer_id 字段直接查询
+    """
+    try:
+        print(f"DEBUG: get_ai_messages for user {current_user.id}, page={page}, page_size={page_size}")
+
+        # 查询优化：使用 customer_id 字段直接查询
+        # 筛选条件：customer_id = 当前用户ID 且 session_id IS NULL（AI聊天阶段）
+        total = db.query(ChatMessage).filter(
+            ChatMessage.customer_id == current_user.id,
+            ChatMessage.session_id.is_(None),
+            ChatMessage.sender_type.in_(["customer", "ai"])
+        ).count()
+
+        # 分页查询
+        offset = (page - 1) * page_size
+        messages = db.query(ChatMessage).filter(
+            ChatMessage.customer_id == current_user.id,
+            ChatMessage.session_id.is_(None),
+            ChatMessage.sender_type.in_(["customer", "ai"])
+        ).order_by(ChatMessage.created_at.asc()).offset(offset).limit(page_size).all()
+
+        print(f"DEBUG: Found {len(messages)} AI messages (total={total})")
+
+        return {
+            "items": [{
+                "id": m.id,
+                "role": m.sender_type,
+                "content": m.content,
+                "created_at": m.created_at.isoformat(),
+                "session_id": m.session_id
+            } for m in messages],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "has_more": offset + len(messages) < total
+        }
+    except Exception as e:
+        print(f"Error getting AI messages: {e}")
+        raise HTTPException(status_code=500, detail=f"获取消息失败: {str(e)}")

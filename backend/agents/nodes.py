@@ -513,7 +513,7 @@ def process_ticket_node(state: AgentState) -> AgentState:
 2. 工单号 (ticket_no): 提取用户提到的工单号（如 TKT-20240101120000 或 20240101120000），如果没有则返回 null
 
 请以 JSON 格式返回：
-{"operation": "操作类型", "ticket_no": "工单号或null", "reason": "操作原因或补充内容"}"""),
+{{"operation": "操作类型", "ticket_no": "工单号或null", "reason": "操作原因或补充内容"}}"""),
                 ("human", "{input}")
             ])
 
@@ -582,7 +582,6 @@ def process_ticket_node(state: AgentState) -> AgentState:
                     sender_id=customer_id,
                     sender_type="customer",
                     content=f"【客户取消工单】{reason}",
-                    is_internal=False
                 )
                 db.add(message)
                 db.commit()
@@ -609,8 +608,7 @@ def process_ticket_node(state: AgentState) -> AgentState:
                     ticket_id=ticket.id,
                     sender_id=customer_id,
                     sender_type="customer",
-                    content=f"【客户确认解决】{reason}",
-                    is_internal=False
+                    content=f"【客户确认解决】{reason}"
                 )
                 db.add(message)
                 db.commit()
@@ -637,8 +635,7 @@ def process_ticket_node(state: AgentState) -> AgentState:
                     ticket_id=ticket.id,
                     sender_id=customer_id,
                     sender_type="customer",
-                    content=f"【客户重新打开工单】{reason}",
-                    is_internal=False
+                    content=f"【客户重新打开工单】{reason}"
                 )
                 db.add(message)
                 db.commit()
@@ -654,8 +651,7 @@ def process_ticket_node(state: AgentState) -> AgentState:
                     ticket_id=ticket.id,
                     sender_id=customer_id,
                     sender_type="customer",
-                    content=f"【客户补充信息】{reason}",
-                    is_internal=False
+                    content=f"【客户补充信息】{reason}"
                 )
                 db.add(message)
                 db.commit()
@@ -678,8 +674,7 @@ def process_ticket_node(state: AgentState) -> AgentState:
                     ticket_id=ticket.id,
                     sender_id=customer_id,
                     sender_type="customer",
-                    content=f"【客户催促】请尽快处理此工单。原因：{reason}",
-                    is_internal=False
+                    content=f"【客户催促】请尽快处理此工单。原因：{reason}"
                 )
                 db.add(message)
 

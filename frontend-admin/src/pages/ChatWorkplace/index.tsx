@@ -24,11 +24,12 @@ interface ChatSession {
 interface ChatMessage {
   id: string
   content: string
-  sender_type: 'customer' | 'agent' | 'system'
+  sender_type: 'customer' | 'agent' | 'system' | 'ai'
   sender?: {
     id: string
     name: string
-  }
+  } | null
+  is_read?: boolean
   created_at: string
 }
 
@@ -292,6 +293,18 @@ const ChatWorkplace: React.FC = () => {
     return `${Math.floor(seconds / 3600)}小时${Math.floor((seconds % 3600) / 60)}分钟`
   }
 
+  const formatMessageTime = (createdAt: string) => {
+    const date = new Date(createdAt)
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const hours = String(date.getHours()).padStart(2, '0')
+    const minutes = String(date.getMinutes()).padStart(2, '0')
+    const seconds = String(date.getSeconds()).padStart(2, '0')
+    const milliseconds = String(date.getMilliseconds()).padStart(3, '0')
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${milliseconds}`
+  }
+
   if (!online) {
     return (
       <div className="chat-offline">
@@ -372,23 +385,88 @@ const ChatWorkplace: React.FC = () => {
               {loading ? (
                 <Spin />
               ) : (
-                messages.map(msg => (
-                  <div
-                    key={msg.id}
-                    className={`message ${msg.sender_type}`}
-                  >
-                    {msg.sender_type === 'system' ? (
-                      <Tag color="blue">{msg.content}</Tag>
-                    ) : (
-                      <div className="message-content">
-                        <div className="message-sender">
-                          {msg.sender?.name}
+                messages.map(msg => {
+                  // 统一渲染规则：
+                  // | sender_type | sender_id | 显示名称 |
+                  // |-------------|-----------|----------|
+                  // | ai          | NULL      | AI助手   |
+                  // | customer    | 有值      | 客户     |
+                  // | agent       | 有值      | 客服(名) |
+                  // | system      | NULL/有值 | 系统     |
+
+                  const getSenderLabel = () => {
+                    switch (msg.sender_type) {
+                      case 'ai':
+                        return 'AI助手';
+                      case 'customer':
+                        return msg.sender?.name ? `客户(${msg.sender.name})` : '客户';
+                      case 'agent':
+                        return msg.sender?.name ? `客服(${msg.sender.name})` : '客服';
+                      case 'system':
+                        return '系统';
+                      default:
+                        return msg.sender?.name || '系统';
+                    }
+                  };
+
+                  const isAgent = msg.sender_type === 'agent';
+
+                  return (
+                    <div
+                      key={msg.id}
+                      className={`message ${msg.sender_type}`}
+                      style={{
+                        display: 'flex',
+                        justifyContent: isAgent ? 'flex-end' : 'flex-start',
+                        marginBottom: 12
+                      }}
+                    >
+                      {msg.sender_type === 'system' ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                          <Tag color="blue">{msg.content}</Tag>
+                          <span style={{ fontSize: 11, color: '#999', fontFamily: 'monospace' }}>
+                            {formatMessageTime(msg.created_at)}
+                          </span>
                         </div>
-                        <div className="message-text">{msg.content}</div>
-                      </div>
-                    )}
-                  </div>
-                ))
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', maxWidth: '70%' }}>
+                          {/* 发送者信息在消息框上方 */}
+                          <div
+                            className="message-header"
+                            style={{
+                              fontSize: 12,
+                              color: '#999',
+                              marginBottom: 4,
+                              paddingLeft: isAgent ? 0 : 4,
+                              paddingRight: isAgent ? 4 : 0,
+                              textAlign: isAgent ? 'right' : 'left',
+                              whiteSpace: 'nowrap',
+                              flexShrink: 0
+                            }}
+                          >
+                            <span>{getSenderLabel()}</span>
+                            <span style={{ marginLeft: 8, fontSize: 11, fontFamily: 'monospace' }}>
+                              {formatMessageTime(msg.created_at)}
+                            </span>
+                          </div>
+                          {/* 消息内容 */}
+                          <div
+                            className="message-content"
+                            style={{
+                              padding: '10px 14px',
+                              borderRadius: 8,
+                              backgroundColor: isAgent ? '#1890ff' : '#fff',
+                              color: isAgent ? '#fff' : '#000',
+                              boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                            }}
+                          >
+                            <div className="message-text">{msg.content}</div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
               )}
               <div ref={messagesEndRef} />
             </div>
