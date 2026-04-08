@@ -4,14 +4,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from datetime import datetime
 
 from config import settings
 from db.session import get_db
 from models import User, Role
 from schemas.user import UserCreate, User as UserSchema, Token
-from auth.jwt import verify_password, get_password_hash, create_access_token, create_refresh_token
+from auth.jwt import verify_password, get_password_hash, create_access_token, create_refresh_token, decode_token
 from auth.middleware import get_current_user, get_current_active_user
+from utils.timezone import now
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -74,7 +74,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
         )
 
     # 更新最后登录时间
-    db_user.last_login_at = datetime.utcnow()
+    db_user.last_login_at = now()
     db.commit()
 
     # 创建 token

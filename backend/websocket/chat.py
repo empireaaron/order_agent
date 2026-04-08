@@ -7,10 +7,10 @@ from typing import Dict, Set
 from fastapi import WebSocket
 from sqlalchemy.orm import Session
 import logging
-from datetime import datetime
 
 from models.chat import ChatSession, ChatMessage, AgentStatus
 from db.session import get_db_context
+from utils.timezone import now
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +54,11 @@ class ChatWebSocketManager:
 
     async def auto_join_sessions(self, user_id: str):
         """自动加入用户进行中的会话（包括最近关闭的）"""
-        from datetime import datetime, timedelta
+        from datetime import timedelta
 
         with get_db_context() as db:
             # 查询用户进行中的会话，以及24小时内关闭的会话
-            cutoff_time = datetime.utcnow() - timedelta(hours=24)
+            cutoff_time = now() - timedelta(hours=24)
             sessions = db.query(ChatSession).filter(
                 ((ChatSession.customer_id == user_id) | (ChatSession.agent_id == user_id)),
                 ((ChatSession.status == "connected") |
@@ -265,7 +265,7 @@ class ChatWebSocketManager:
                     db.add(msg)
 
                     # 更新会话最后消息时间
-                    session.last_message_at = datetime.utcnow()
+                    session.last_message_at = now()
                     db.commit()
                     db.refresh(msg)
 
@@ -311,7 +311,7 @@ class ChatWebSocketManager:
                     ).first()
                     if msg:
                         msg.is_read = "1"
-                        msg.read_at = datetime.utcnow()
+                        msg.read_at = now()
                 db.commit()
 
                 # 通知对方已读
@@ -336,7 +336,7 @@ async def notify_new_session(session_id: str, customer_info: dict):
         "type": "new_waiting_session",
         "session_id": session_id,
         "customer": customer_info,
-        "created_at": datetime.utcnow().isoformat()
+        "created_at": now().isoformat()
     })
 
 

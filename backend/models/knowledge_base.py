@@ -1,13 +1,13 @@
 """
 知识库模型
 """
-from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Boolean, Text, JSON
 from sqlalchemy.orm import relationship
 
 from db.session import Base
+from utils.timezone import now
 
 
 class KnowledgeBase(Base):
@@ -24,8 +24,8 @@ class KnowledgeBase(Base):
     embedding_model = Column(String(100), default="sentence-transformers/all-MiniLM-L6-v2", comment="嵌入模型")
     meta_data = Column(JSON, nullable=True, comment="元数据")
 
-    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
+    created_at = Column(DateTime, default=now, comment="创建时间")
+    updated_at = Column(DateTime, default=now, onupdate=now, comment="更新时间")
 
     # 关系
     owner = relationship("User", back_populates="created_knowledge_bases")
@@ -61,8 +61,8 @@ class Document(Base):
     error_message = Column(Text, nullable=True, comment="错误信息")
     meta_data = Column(JSON, nullable=True, comment="元数据")
 
-    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
+    created_at = Column(DateTime, default=now, comment="创建时间")
+    updated_at = Column(DateTime, default=now, onupdate=now, comment="更新时间")
 
     # 关系
     knowledge_base = relationship("KnowledgeBase", back_populates="documents")

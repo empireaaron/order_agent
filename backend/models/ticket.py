@@ -1,13 +1,13 @@
 """
 用户和角色模型
 """
-from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Boolean, Text, JSON
 from sqlalchemy.orm import relationship
 
 from db.session import Base
+from utils.timezone import now
 
 
 class Role(Base):
@@ -49,8 +49,8 @@ class User(Base):
     last_login_at = Column(DateTime, nullable=True, comment="最后登录时间")
     avatar_url = Column(String(500), nullable=True, comment="头像URL")
 
-    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
+    created_at = Column(DateTime, default=now, comment="创建时间")
+    updated_at = Column(DateTime, default=now, onupdate=now, comment="更新时间")
 
     # 关系
     role = relationship("Role", back_populates="users")
@@ -116,8 +116,8 @@ class Ticket(Base):
     resolved_at = Column(DateTime, nullable=True, comment="解决时间")
     closed_at = Column(DateTime, nullable=True, comment="关闭时间")
 
-    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, comment="更新时间")
+    created_at = Column(DateTime, default=now, comment="创建时间")
+    updated_at = Column(DateTime, default=now, onupdate=now, comment="更新时间")
 
     # 关系
     customer = relationship("User", back_populates="tickets", foreign_keys=[customer_id])
@@ -160,7 +160,7 @@ class TicketMessage(Base):
     is_read = Column(Boolean, default=False, comment="是否已读")
     read_at = Column(DateTime, nullable=True, comment="阅读时间")
 
-    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+    created_at = Column(DateTime, default=now, comment="创建时间")
 
     # 关系
     ticket = relationship("Ticket", back_populates="messages")
@@ -190,7 +190,7 @@ class TicketStatusLog(Base):
     changed_by_id = Column(String(36), ForeignKey("users.id"), nullable=False, comment="变更者ID")
     note = Column(Text, nullable=True, comment="备注")
 
-    created_at = Column(DateTime, default=datetime.utcnow, comment="创建时间")
+    created_at = Column(DateTime, default=now, comment="创建时间")
 
     # 关系
     ticket = relationship("Ticket", back_populates="status_logs")

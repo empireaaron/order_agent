@@ -2,12 +2,12 @@
 Mysql 工具函数 - 工单 CRUD
 """
 from typing import List, Dict, Optional
-from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
 from models import Ticket, TicketMessage, TicketStatusLog, KnowledgeBase, Document
+from utils.timezone import now
 
 
 # 工单操作
@@ -22,7 +22,7 @@ def create_ticket(
 ) -> Ticket:
     """创建工单"""
     # 生成工单编号
-    ticket_no = f"TKT-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+    ticket_no = f"TKT-{now().strftime('%Y%m%d%H%M%S')}"
 
     ticket = Ticket(
         id=str(uuid4()),
@@ -89,7 +89,7 @@ def update_ticket_status(
 
     from_status = ticket.status
     ticket.status = to_status
-    ticket.updated_at = datetime.utcnow()
+    ticket.updated_at = now()
 
     # 记录状态变更
     status_log = TicketStatusLog(

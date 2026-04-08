@@ -2,8 +2,9 @@
 LangGraph 智能体节点函数
 """
 import logging
-from datetime import datetime
 import re
+
+from utils.timezone import now
 
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import END, StateGraph
@@ -600,7 +601,7 @@ def process_ticket_node(state: AgentState) -> AgentState:
                     }
 
                 ticket.status = "resolved"
-                ticket.resolved_at = datetime.utcnow()
+                ticket.resolved_at = now()
                 db.commit()
 
                 # 添加确认消息
@@ -682,7 +683,7 @@ def process_ticket_node(state: AgentState) -> AgentState:
                 if ticket.priority in ["low", "normal"]:
                     ticket.priority = "high"
 
-                ticket.updated_at = datetime.utcnow()
+                ticket.updated_at = now()
                 db.commit()
 
                 status_map = {

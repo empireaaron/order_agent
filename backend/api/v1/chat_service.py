@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import timedelta
 import asyncio
 
 from db.session import get_db
@@ -13,6 +13,7 @@ from auth.middleware import get_current_active_user
 from models import User
 from models.chat import ChatSession, ChatMessage, AgentStatus
 from websocket.chat import chat_ws_manager
+from utils.timezone import now
 
 router = APIRouter(prefix="/chat-service", tags=["Chat Service"])
 
@@ -43,7 +44,7 @@ async def notify_system_message(session_id: str, msg_id: str, content: str):
                 "id": msg_id,
                 "content": content,
                 "sender_type": "system",
-                "created_at": datetime.utcnow().isoformat()
+                "created_at": now().isoformat()
             }
         }
     )
@@ -59,7 +60,7 @@ async def notify_new_waiting_session(session_id: str, customer_id: str, customer
             "username": customer_name
         },
         "initial_message": initial_message,
-        "created_at": datetime.utcnow().isoformat()
+        "created_at": now().isoformat()
     })
 
 
@@ -78,7 +79,7 @@ async def notify_chat_message(session_id: str, msg_id: str, content: str, sender
                     "id": sender_id,
                     "name": sender_name
                 },
-                "created_at": datetime.utcnow().isoformat()
+                "created_at": now().isoformat()
             }
         }
     )
@@ -178,7 +179,7 @@ def create_chat_session(
         if assigned_agent:
             session.agent_id = assigned_agent.agent_id
             session.status = "connected"
-            session.connected_at = datetime.utcnow()
+            session.connected_at = now()
             db.commit()
 
             # 发送系统消息
@@ -281,7 +282,7 @@ def get_waiting_sessions(
         "request_type": s.request_type,
         "initial_message": s.initial_message,
         "created_at": s.created_at.isoformat(),
-        "wait_time_seconds": (datetime.utcnow() - s.created_at).seconds
+        "wait_time_seconds": (now() - s.created_at).seconds
     } for s in sessions]
 
 
@@ -317,7 +318,7 @@ def accept_chat_session(
     # 分配会话
     session.agent_id = current_user.id
     session.status = "connected"
-    session.connected_at = datetime.utcnow()
+    session.connected_at = now()
     db.commit()
 
     # 更新客服状态
@@ -447,7 +448,7 @@ def send_chat_message(
     db.add(chat_msg)
 
     # 更新会话最后消息时间
-    session.last_message_at = datetime.utcnow()
+    session.last_message_at = now()
     db.commit()
     db.refresh(chat_msg)
 
@@ -575,7 +576,7 @@ def close_chat_session(
         raise HTTPException(status_code=403, detail="Not allowed")
 
     session.status = "closed"
-    session.closed_at = datetime.utcnow()
+    session.closed_at = now()
     db.commit()
 
     # 更新客服会话数

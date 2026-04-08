@@ -6,9 +6,11 @@ import time
 import threading
 from typing import Dict, Any, Optional
 from collections import defaultdict, deque
-from datetime import datetime, timedelta, date
+from datetime import timedelta, date
 from uuid import uuid4
 import logging
+
+from utils.timezone import now
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +213,7 @@ class MetricsCollector:
         key = f"{method} {endpoint}"
         with self._lock:
             self.api_latencies[key].append({
-                "timestamp": datetime.utcnow(),
+                "timestamp": now(),
                 "latency_ms": latency_ms
             })
 
@@ -282,7 +284,7 @@ class MetricsCollector:
                       time_window_minutes: int = 60) -> Dict[str, Any]:
         """获取 API 统计信息（内存 + 数据库）"""
         # 从内存获取实时数据
-        cutoff_time = datetime.utcnow() - timedelta(minutes=time_window_minutes)
+        cutoff_time = now() - timedelta(minutes=time_window_minutes)
 
         with self._lock:
             result = {}
@@ -464,7 +466,7 @@ class MetricsCollector:
     def get_all_stats(self) -> Dict[str, Any]:
         """获取所有统计信息"""
         return {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": now().isoformat(),
             "api": self.get_api_stats(),
             "intent": self.get_intent_stats(),
             "errors": self.get_error_stats(),
