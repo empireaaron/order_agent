@@ -362,7 +362,10 @@ class MetricsCollector:
                 from models import ApiMetrics
                 from sqlalchemy import func
 
-                today = date.today()
+                # 计算查询的起始日期（根据time_window_minutes）
+                days_back = max(1, time_window_minutes // (24 * 60))
+                start_date = date.today() - timedelta(days=days_back)
+
                 db_stats = db.query(
                     ApiMetrics.endpoint,
                     ApiMetrics.method,
@@ -372,18 +375,21 @@ class MetricsCollector:
                     func.min(ApiMetrics.latency_min_ms).label('min_latency'),
                     func.max(ApiMetrics.latency_max_ms).label('max_latency')
                 ).filter(
-                    ApiMetrics.metric_date >= today - timedelta(days=7)
+                    ApiMetrics.metric_date >= start_date
                 ).group_by(ApiMetrics.endpoint, ApiMetrics.method).all()
 
                 for stat in db_stats:
                     key = f"{stat.method} {stat.endpoint}"
                     if key not in result:
+                        # 转换为 float 避免 decimal 类型错误
+                        total_latency = float(stat.total_latency) if stat.total_latency else 0
+                        total_requests = float(stat.total_requests) if stat.total_requests else 0
                         result[key] = {
-                            "count": stat.total_requests,
-                            "error_count": stat.total_errors,
-                            "avg_latency_ms": round(stat.total_latency / stat.total_requests, 2) if stat.total_requests > 0 else 0,
-                            "min_ms": round(stat.min_latency, 2) if stat.min_latency else 0,
-                            "max_ms": round(stat.max_latency, 2) if stat.max_latency else 0,
+                            "count": int(stat.total_requests) if stat.total_requests else 0,
+                            "error_count": int(stat.total_errors) if stat.total_errors else 0,
+                            "avg_latency_ms": round(total_latency / total_requests, 2) if total_requests > 0 else 0,
+                            "min_ms": round(float(stat.min_latency), 2) if stat.min_latency else 0,
+                            "max_ms": round(float(stat.max_latency), 2) if stat.max_latency else 0,
                             "source": "db"
                         }
 
@@ -415,7 +421,9 @@ class MetricsCollector:
                 results = db.query(
                     IntentMetrics.intent,
                     func.sum(IntentMetrics.total).label('total'),
-                    func.sum(IntentMetrics.correct).label('correct')
+                    func.sum(IntentMetrics.correct).label('correct'),
+                    func.sum(IntentMetrics.sampled).label('sampled'),
+                    func.sum(IntentMetrics.sampled_correct).label('sampled_correct')
                 ).filter(
                     IntentMetrics.metric_date >= start_date
                 ).group_by(IntentMetrics.intent).all()
@@ -423,7 +431,9 @@ class MetricsCollector:
                 for r in results:
                     db_stats[r.intent] = {
                         "total": r.total or 0,
-                        "correct": r.correct or 0
+                        "correct": r.correct or 0,
+                        "sampled": r.sampled or 0,
+                        "sampled_correct": r.sampled_correct or 0
                     }
 
                 db.close()
@@ -452,6 +462,8 @@ class MetricsCollector:
             for intent in all_intents:
                 db_total = db_stats.get(intent, {}).get("total", 0)
                 db_correct = db_stats.get(intent, {}).get("correct", 0)
+                db_sampled = db_stats.get(intent, {}).get("sampled", 0)
+                db_sampled_correct = db_stats.get(intent, {}).get("sampled_correct", 0)
                 mem_total = self.intent_stats["by_intent"][intent]["total"]
                 mem_correct = self.intent_stats["by_intent"][intent]["correct"]
 
@@ -460,7 +472,10 @@ class MetricsCollector:
 
                 stats["by_intent"][intent] = {
                     "total": intent_total,
-                    "accuracy": round(intent_correct / intent_total, 4) if intent_total > 0 else 0
+                    "accuracy": round(intent_correct / intent_total, 4) if intent_total > 0 else 0,
+                    "sampled": db_sampled,
+                    "sampled_correct": db_sampled_correct,
+                    "sampled_accuracy": round(db_sampled_correct / db_sampled, 4) if db_sampled > 0 else 0
                 }
 
         return stats

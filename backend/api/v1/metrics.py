@@ -8,7 +8,7 @@ from datetime import date, timedelta
 from pydantic import BaseModel
 
 from auth.middleware import get_current_active_user, require_admin_role
-from models import User, IntentClassificationLog, IntentMetrics
+from models import User, IntentClassificationLog, IntentMetrics, ErrorMetrics
 from db.session import get_db
 from sqlalchemy.orm import Session
 from utils.metrics import metrics
@@ -53,16 +53,102 @@ async def get_api_metrics(
 
 @router.get("/intent")
 async def get_intent_metrics(
-    days: int = 7,
+    days: Optional[int] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
     current_user: User = Depends(require_admin_role)
 ) -> Dict[str, Any]:
     """
     获取 AI 意图识别统计（仅管理员）
 
     Args:
-        days: 查询最近几天的数据，默认7天
+        days: 查询最近几天的数据（与start_date/end_date互斥）
+        start_date: 开始日期（自定义范围）
+        end_date: 结束日期（自定义范围）
     """
-    return metrics.get_intent_stats(days)
+    if start_date and end_date:
+        # 自定义日期范围
+        delta_days = (end_date - start_date).days + 1
+        return metrics.get_intent_stats(delta_days)
+    elif days:
+        return metrics.get_intent_stats(days)
+    else:
+        # 默认近7天
+        return metrics.get_intent_stats(7)
+
+
+@router.get("/intent/trend")
+async def get_intent_trend(
+    days: Optional[int] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin_role)
+) -> Dict[str, Any]:
+    """
+    获取 AI 意图识别每日趋势（用于折线图）
+
+    Args:
+        days: 查询最近几天的数据（与start_date/end_date互斥）
+        start_date: 开始日期（自定义范围）
+        end_date: 结束日期（自定义范围）
+    """
+    from sqlalchemy import func as sql_func
+
+    # 计算日期范围
+    if start_date and end_date:
+        query_start_date = start_date
+        query_end_date = end_date
+        period_days = (end_date - start_date).days + 1
+    elif days:
+        query_start_date = date.today() - timedelta(days=days)
+        query_end_date = date.today()
+        period_days = days
+    else:
+        # 默认近7天
+        query_start_date = date.today() - timedelta(days=7)
+        query_end_date = date.today()
+        period_days = 7
+
+    # 查询每日各意图的识别次数
+    daily_stats = db.query(
+        IntentMetrics.metric_date,
+        IntentMetrics.intent,
+        IntentMetrics.total
+    ).filter(
+        IntentMetrics.metric_date >= query_start_date,
+        IntentMetrics.metric_date <= query_end_date
+    ).order_by(IntentMetrics.metric_date, IntentMetrics.intent).all()
+
+    # 构建趋势数据
+    dates = []
+    current_date = query_start_date
+    while current_date <= query_end_date:
+        dates.append(current_date.isoformat())
+        current_date += timedelta(days=1)
+
+    # 按意图类型分组
+    intent_types = list(set([stat.intent for stat in daily_stats]))
+
+    # 构建每日数据
+    trend_data = []
+    for d in dates:
+        day_data = {"date": d}
+        for intent in intent_types:
+            # 查找该日期该意图的数据
+            stat = next(
+                (s for s in daily_stats if s.metric_date.isoformat() == d and s.intent == intent),
+                None
+            )
+            day_data[intent] = stat.total if stat else 0
+        trend_data.append(day_data)
+
+    return {
+        "period_days": period_days,
+        "dates": dates,
+        "intents": intent_types,
+        "data": trend_data
+    }
 
 
 @router.post("/intent/feedback")
@@ -80,16 +166,50 @@ async def submit_intent_feedback(
 
 @router.get("/errors")
 async def get_error_metrics(
-    days: int = 7,
+    days: Optional[int] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    db: Session = Depends(get_db),
     current_user: User = Depends(require_admin_role)
 ) -> Dict[str, int]:
     """
     获取错误统计（仅管理员）
 
     Args:
-        days: 查询最近几天的数据，默认7天
+        days: 查询最近几天的数据（与start_date/end_date互斥）
+        start_date: 开始日期（自定义范围）
+        end_date: 结束日期（自定义范围）
     """
-    return metrics.get_error_stats(days)
+    from sqlalchemy import func as sql_func
+
+    # 计算日期范围
+    if start_date and end_date:
+        query_start_date = start_date
+        query_end_date = end_date
+    elif days:
+        query_start_date = date.today() - timedelta(days=days)
+        query_end_date = date.today()
+    else:
+        # 默认近7天
+        query_start_date = date.today() - timedelta(days=7)
+        query_end_date = date.today()
+
+    # 从数据库查询错误统计
+    results = db.query(
+        ErrorMetrics.error_type,
+        ErrorMetrics.endpoint,
+        sql_func.sum(ErrorMetrics.count).label('total')
+    ).filter(
+        ErrorMetrics.metric_date >= query_start_date,
+        ErrorMetrics.metric_date <= query_end_date
+    ).group_by(ErrorMetrics.error_type, ErrorMetrics.endpoint).all()
+
+    errors = {}
+    for r in results:
+        key = f"{r.error_type}:{r.endpoint}" if r.endpoint else r.error_type
+        errors[key] = r.total
+
+    return errors
 
 
 @router.get("/websocket")
@@ -111,7 +231,9 @@ async def reset_metrics(
 
 @router.get("/intent/sample", response_model=List[SampleResponse])
 async def get_intent_sample(
-    days: int = 7,
+    days: Optional[int] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
     limit: int = 10,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin_role)
@@ -120,16 +242,29 @@ async def get_intent_sample(
     随机抽取意图识别记录用于人工标注（仅管理员）
 
     Args:
-        days: 查询最近几天的数据，默认7天
+        days: 查询最近几天的数据（与start_date/end_date互斥）
+        start_date: 开始日期（自定义范围）
+        end_date: 结束日期（自定义范围）
         limit: 抽取数量，默认10条
     """
     from sqlalchemy import func
 
-    start_date = date.today() - timedelta(days=days)
+    # 计算日期范围
+    if start_date and end_date:
+        query_start_date = start_date
+        query_end_date = end_date
+    elif days:
+        query_start_date = date.today() - timedelta(days=days)
+        query_end_date = date.today()
+    else:
+        # 默认近7天
+        query_start_date = date.today() - timedelta(days=7)
+        query_end_date = date.today()
 
     # 查询未抽样的记录，随机排序
     logs = db.query(IntentClassificationLog).filter(
-        IntentClassificationLog.metric_date >= start_date,
+        IntentClassificationLog.metric_date >= query_start_date,
+        IntentClassificationLog.metric_date <= query_end_date,
         IntentClassificationLog.is_sampled == False
     ).order_by(func.random()).limit(limit).all()
 
@@ -194,34 +329,58 @@ async def annotate_intent_sample(
 
 @router.get("/intent/sample-stats")
 async def get_intent_sample_stats(
-    days: int = 7,
+    days: Optional[int] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin_role)
 ):
     """
     获取抽样标注统计（仅管理员）
+
+    Args:
+        days: 查询最近几天的数据（与start_date/end_date互斥）
+        start_date: 开始日期（自定义范围）
+        end_date: 结束日期（自定义范围）
     """
     from sqlalchemy import func as sql_func
 
-    start_date = date.today() - timedelta(days=days)
+    # 计算日期范围
+    if start_date and end_date:
+        query_start_date = start_date
+        query_end_date = end_date
+        period_days = (end_date - start_date).days + 1
+    elif days:
+        query_start_date = date.today() - timedelta(days=days)
+        query_end_date = date.today()
+        period_days = days
+    else:
+        # 默认近7天
+        query_start_date = date.today() - timedelta(days=7)
+        query_end_date = date.today()
+        period_days = 7
 
     # 总体统计
     total_logs = db.query(IntentClassificationLog).filter(
-        IntentClassificationLog.metric_date >= start_date
+        IntentClassificationLog.metric_date >= query_start_date,
+        IntentClassificationLog.metric_date <= query_end_date
     ).count()
 
     sampled_logs = db.query(IntentClassificationLog).filter(
-        IntentClassificationLog.metric_date >= start_date,
+        IntentClassificationLog.metric_date >= query_start_date,
+        IntentClassificationLog.metric_date <= query_end_date,
         IntentClassificationLog.is_sampled == True
     ).count()
 
     annotated_logs = db.query(IntentClassificationLog).filter(
-        IntentClassificationLog.metric_date >= start_date,
+        IntentClassificationLog.metric_date >= query_start_date,
+        IntentClassificationLog.metric_date <= query_end_date,
         IntentClassificationLog.is_correct != None
     ).count()
 
     correct_logs = db.query(IntentClassificationLog).filter(
-        IntentClassificationLog.metric_date >= start_date,
+        IntentClassificationLog.metric_date >= query_start_date,
+        IntentClassificationLog.metric_date <= query_end_date,
         IntentClassificationLog.is_correct == True
     ).count()
 
@@ -231,12 +390,13 @@ async def get_intent_sample_stats(
         sql_func.count(IntentClassificationLog.id).label('total'),
         sql_func.sum(sql_func.case([(IntentClassificationLog.is_correct == True, 1)], else_=0)).label('correct')
     ).filter(
-        IntentClassificationLog.metric_date >= start_date,
+        IntentClassificationLog.metric_date >= query_start_date,
+        IntentClassificationLog.metric_date <= query_end_date,
         IntentClassificationLog.is_correct != None
     ).group_by(IntentClassificationLog.intent).all()
 
     return {
-        "period_days": days,
+        "period_days": period_days,
         "total_logs": total_logs,
         "sampled": sampled_logs,
         "annotated": annotated_logs,

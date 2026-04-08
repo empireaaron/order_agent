@@ -23,7 +23,7 @@ import {
   CheckOutlined,
   CloseOutlined,
 } from '@ant-design/icons'
-import { Button, message, Progress } from 'antd'
+import { Button, message, Progress, DatePicker } from 'antd'
 import {
   LineChart,
   Line,
@@ -53,6 +53,9 @@ interface IntentMetricsData {
   by_intent: Record<string, {
     total: number
     accuracy: number
+    sampled?: number
+    sampled_correct?: number
+    sampled_accuracy?: number
   }>
 }
 
@@ -105,7 +108,7 @@ interface SampleStats {
 }
 
 // 时间范围类型
-type TimeRange = '1' | '7' | '30'
+type TimeRange = '1' | '7' | '30' | 'custom'
 
 // 颜色配置
 const COLORS = ['#1890ff', '#52c41a', '#faad14', '#f5222d', '#722ed1', '#13c2c2', '#eb2f96', '#fa541c']
@@ -113,10 +116,12 @@ const CATEGORY_COLORS = ['#1890ff', '#52c41a', '#faad14', '#f5222d', '#722ed1']
 
 const MetricsPage: React.FC = () => {
   const [timeRange, setTimeRange] = useState<TimeRange>('7')
+  const [customDateRange, setCustomDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null)
   const [loading, setLoading] = useState(true)
 
   // 数据状态
   const [intentData, setIntentData] = useState<IntentMetricsData | null>(null)
+  const [intentTrendData, setIntentTrendData] = useState<any[]>([])
   const [apiData, setApiData] = useState<ApiMetricsData | null>(null)
   const [errorData, setErrorData] = useState<ErrorMetricsData | null>(null)
   const [wsData, setWsData] = useState<WebSocketMetricsData | null>(null)
@@ -129,17 +134,41 @@ const MetricsPage: React.FC = () => {
 
   // 获取所有数据
   const fetchData = async () => {
+    // 自定义模式下未选择日期范围时不调用接口
+    if (timeRange === 'custom' && !customDateRange) {
+      return
+    }
+
     setLoading(true)
     try {
-      const days = parseInt(timeRange)
-      const [intentRes, apiRes, errorRes, wsRes] = await Promise.all([
-        api.get(`/metrics/intent?days=${days}`),
-        api.get(`/metrics/api?time_window_minutes=${days * 24 * 60}`),
-        api.get(`/metrics/errors?days=${days}`),
+      let intentUrl, trendUrl, apiUrl, errorUrl
+
+      if (timeRange === 'custom' && customDateRange) {
+        const startDate = customDateRange[0].format('YYYY-MM-DD')
+        const endDate = customDateRange[1].format('YYYY-MM-DD')
+        const days = customDateRange[1].diff(customDateRange[0], 'day') + 1
+        intentUrl = `/metrics/intent?start_date=${startDate}&end_date=${endDate}`
+        trendUrl = `/metrics/intent/trend?start_date=${startDate}&end_date=${endDate}`
+        apiUrl = `/metrics/api?time_window_minutes=${days * 24 * 60}`
+        errorUrl = `/metrics/errors?start_date=${startDate}&end_date=${endDate}`
+      } else {
+        const days = parseInt(timeRange)
+        intentUrl = `/metrics/intent?days=${days}`
+        trendUrl = `/metrics/intent/trend?days=${days}`
+        apiUrl = `/metrics/api?time_window_minutes=${days * 24 * 60}`
+        errorUrl = `/metrics/errors?days=${days}`
+      }
+
+      const [intentRes, intentTrendRes, apiRes, errorRes, wsRes] = await Promise.all([
+        api.get(intentUrl),
+        api.get(trendUrl),
+        api.get(apiUrl),
+        api.get(errorUrl),
         api.get('/metrics/websocket'),
       ])
 
       setIntentData(intentRes.data)
+      setIntentTrendData(intentTrendRes.data.data || [])
       setApiData(apiRes.data)
       setErrorData(errorRes.data)
       setWsData(wsRes.data)
@@ -152,13 +181,18 @@ const MetricsPage: React.FC = () => {
 
   useEffect(() => {
     fetchData()
-  }, [timeRange])
+  }, [timeRange, customDateRange])
 
   // 获取抽样统计
   const fetchSampleStats = async () => {
     try {
-      const days = parseInt(timeRange)
-      const res = await api.get(`/metrics/intent/sample-stats?days=${days}`)
+      let url = '/metrics/intent/sample-stats?'
+      if (timeRange === 'custom' && customDateRange) {
+        url += `start_date=${customDateRange[0].format('YYYY-MM-DD')}&end_date=${customDateRange[1].format('YYYY-MM-DD')}`
+      } else {
+        url += `days=${parseInt(timeRange)}`
+      }
+      const res = await api.get(url)
       setSampleStats(res.data)
     } catch (error) {
       console.error('获取抽样统计失败:', error)
@@ -169,8 +203,13 @@ const MetricsPage: React.FC = () => {
   const handleSample = async () => {
     setSamplingLoading(true)
     try {
-      const days = parseInt(timeRange)
-      const res = await api.get(`/metrics/intent/sample?days=${days}&limit=10`)
+      let url = '/metrics/intent/sample?limit=10&'
+      if (timeRange === 'custom' && customDateRange) {
+        url += `start_date=${customDateRange[0].format('YYYY-MM-DD')}&end_date=${customDateRange[1].format('YYYY-MM-DD')}`
+      } else {
+        url += `days=${parseInt(timeRange)}`
+      }
+      const res = await api.get(url)
       setSampleLogs(res.data)
       await fetchSampleStats()
       message.success(`成功抽取 ${res.data.length} 条记录`)
@@ -245,6 +284,9 @@ const MetricsPage: React.FC = () => {
       total: data.total,
       correct: Math.round(data.total * data.accuracy),
       accuracy: data.accuracy,
+      sampled: data.sampled || 0,
+      sampled_correct: data.sampled_correct || 0,
+      sampled_accuracy: data.sampled_accuracy || 0,
     }))
   }, [intentData])
 
@@ -307,28 +349,6 @@ const MetricsPage: React.FC = () => {
     return Object.entries(typeMap).map(([name, value]) => ({ name, value }))
   }, [errorData])
 
-  // 模拟趋势数据（基于实际数据生成）
-  const intentTrendData = useMemo(() => {
-    if (!intentData?.by_intent) return []
-    const days = parseInt(timeRange)
-    const dates: string[] = []
-    for (let i = days - 1; i >= 0; i--) {
-      dates.push(dayjs().subtract(i, 'day').format('MM-DD'))
-    }
-
-    // 生成模拟趋势数据（实际项目中应从API获取每日数据）
-    const intents = Object.keys(intentData.by_intent)
-    return dates.map((date) => {
-      const data: Record<string, number | string> = { date }
-      intents.forEach((intent) => {
-        // 模拟波动数据
-        const baseCount = Math.floor((intentData.by_intent[intent].total || 0) / days)
-        const randomFactor = 0.5 + Math.random()
-        data[intent] = Math.max(1, Math.floor(baseCount * randomFactor))
-      })
-      return data
-    })
-  }, [intentData, timeRange])
 
   // 表格列定义
   const intentColumns = [
@@ -354,6 +374,7 @@ const MetricsPage: React.FC = () => {
       dataIndex: 'accuracy',
       key: 'accuracy',
       render: (accuracy: number) => {
+        if (accuracy === 0) return <span style={{ color: '#999' }}>-</span>
         const percent = (accuracy * 100).toFixed(2)
         let color = 'green'
         if (accuracy < 0.8) color = 'red'
@@ -361,6 +382,31 @@ const MetricsPage: React.FC = () => {
         return <Tag color={color}>{percent}%</Tag>
       },
       sorter: (a: any, b: any) => a.accuracy - b.accuracy,
+    },
+    {
+      title: '抽样次数',
+      dataIndex: 'sampled',
+      key: 'sampled',
+      sorter: (a: any, b: any) => a.sampled - b.sampled,
+    },
+    {
+      title: '抽样正确',
+      dataIndex: 'sampled_correct',
+      key: 'sampled_correct',
+    },
+    {
+      title: '抽样准确率',
+      dataIndex: 'sampled_accuracy',
+      key: 'sampled_accuracy',
+      render: (accuracy: number, record: any) => {
+        if (record.sampled === 0) return <span style={{ color: '#999' }}>-</span>
+        const percent = (accuracy * 100).toFixed(2)
+        let color = 'green'
+        if (accuracy < 0.8) color = 'red'
+        else if (accuracy < 0.9) color = 'orange'
+        return <Tag color={color}>{percent}%</Tag>
+      },
+      sorter: (a: any, b: any) => a.sampled_accuracy - b.sampled_accuracy,
     },
   ]
 
@@ -453,16 +499,31 @@ const MetricsPage: React.FC = () => {
           <DashboardOutlined style={{ marginRight: 8 }} />
           系统监控
         </Title>
-        <Radio.Group
-          value={timeRange}
-          onChange={(e) => setTimeRange(e.target.value)}
-          optionType="button"
-          buttonStyle="solid"
-        >
-          <Radio.Button value="1">今日</Radio.Button>
-          <Radio.Button value="7">近7天</Radio.Button>
-          <Radio.Button value="30">近30天</Radio.Button>
-        </Radio.Group>
+        <Space>
+          <Radio.Group
+            value={timeRange}
+            onChange={(e) => {
+              setTimeRange(e.target.value)
+              if (e.target.value !== 'custom') {
+                setCustomDateRange(null)
+              }
+            }}
+            optionType="button"
+            buttonStyle="solid"
+          >
+            <Radio.Button value="1">今日</Radio.Button>
+            <Radio.Button value="7">近7天</Radio.Button>
+            <Radio.Button value="30">近30天</Radio.Button>
+            <Radio.Button value="custom">自定义</Radio.Button>
+          </Radio.Group>
+          {timeRange === 'custom' && (
+            <DatePicker.RangePicker
+              value={customDateRange}
+              onChange={(dates) => setCustomDateRange(dates as [dayjs.Dayjs, dayjs.Dayjs])}
+              allowClear={false}
+            />
+          )}
+        </Space>
       </div>
 
       {/* 概览卡片 */}
@@ -482,12 +543,11 @@ const MetricsPage: React.FC = () => {
           <Card>
             <Statistic
               title="意图识别准确率"
-              value={overviewStats.intentAccuracy * 100}
-              suffix="%"
+              value={overviewStats.intentAccuracy > 0 ? (overviewStats.intentAccuracy * 100).toFixed(2) : '-'}
+              suffix={overviewStats.intentAccuracy > 0 ? '%' : ''}
               prefix={<AimOutlined />}
               valueStyle={{ color: overviewStats.intentAccuracy >= 0.9 ? '#52c41a' : overviewStats.intentAccuracy >= 0.8 ? '#faad14' : '#f5222d' }}
               loading={loading}
-              precision={2}
             />
           </Card>
         </Col>
@@ -561,11 +621,14 @@ const MetricsPage: React.FC = () => {
                     <ResponsiveContainer width="100%" height={300}>
                       <LineChart data={intentTrendData}>
                         <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="date" />
+                        <XAxis
+                          dataKey="date"
+                          tickFormatter={(value) => dayjs(value).format('MM-DD')}
+                        />
                         <YAxis />
                         <Tooltip />
                         <Legend />
-                        {Object.keys(intentData?.by_intent || {}).map((intent, index) => (
+                        {Object.keys(intentTrendData[0] || {}).filter(k => k !== 'date').map((intent, index) => (
                           <Line
                             key={intent}
                             type="monotone"
