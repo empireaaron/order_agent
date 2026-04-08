@@ -267,6 +267,28 @@ INSERT INTO `error_metrics` VALUES ('db7fa1d7-77b9-4cd7-a7a4-ba766f48f186', '202
 INSERT INTO `error_metrics` VALUES ('dd4953bc-5ff2-4022-b034-fd599843c7f0', '2026-04-08', 'HTTP422', '/auth/refresh', 9, '2026-04-08 00:06:49', '2026-04-08 15:27:39');
 
 -- ----------------------------
+-- Table structure for intent_classification_logs
+-- ----------------------------
+DROP TABLE IF EXISTS `intent_classification_logs`;
+CREATE TABLE `intent_classification_logs`  (
+  `id` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '日志ID (UUID)',
+  `metric_date` date NOT NULL COMMENT '统计日期',
+  `intent` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '识别的意图',
+  `user_input` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL COMMENT '用户输入内容',
+  `confidence` float NULL DEFAULT 1.0 COMMENT '置信度',
+  `is_sampled` tinyint(1) NOT NULL DEFAULT 0 COMMENT '是否被抽样',
+  `is_correct` tinyint(1) NULL DEFAULT NULL COMMENT '人工标注是否正确（null表示未标注）',
+  `annotated_by` varchar(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL DEFAULT NULL COMMENT '标注人ID',
+  `annotated_at` datetime NULL DEFAULT NULL COMMENT '标注时间',
+  `created_at` datetime NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  PRIMARY KEY (`id`) USING BTREE,
+  INDEX `idx_metric_date`(`metric_date` ASC) USING BTREE,
+  INDEX `idx_intent`(`intent` ASC) USING BTREE,
+  INDEX `idx_is_sampled`(`is_sampled` ASC) USING BTREE,
+  INDEX `idx_date_sampled`(`metric_date` ASC, `is_sampled` ASC) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT = '意图识别明细日志表 - 用于抽样标注' ROW_FORMAT = Dynamic;
+
+-- ----------------------------
 -- Table structure for intent_metrics
 -- ----------------------------
 DROP TABLE IF EXISTS `intent_metrics`;
@@ -277,6 +299,8 @@ CREATE TABLE `intent_metrics`  (
   `total` int(11) NOT NULL DEFAULT 0 COMMENT '总识别次数',
   `correct` int(11) NOT NULL DEFAULT 0 COMMENT '正确次数',
   `confidence_sum` float NULL DEFAULT 0 COMMENT '置信度总和（用于计算平均置信度）',
+  `sampled` int(11) NOT NULL DEFAULT 0 COMMENT '抽样检查数量',
+  `sampled_correct` int(11) NOT NULL DEFAULT 0 COMMENT '抽样中正确的数量',
   `created_at` datetime NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `updated_at` datetime NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`) USING BTREE,
@@ -288,11 +312,11 @@ CREATE TABLE `intent_metrics`  (
 -- ----------------------------
 -- Records of intent_metrics
 -- ----------------------------
-INSERT INTO `intent_metrics` VALUES ('21316ae3-a4a6-40c0-9123-c129c097ecd1', '2026-04-07', 'query_ticket', 21, 0, 21, '2026-04-07 20:22:20', '2026-04-07 23:50:14');
-INSERT INTO `intent_metrics` VALUES ('64c489ab-d622-4d66-942f-740d72dca921', '2026-04-07', 'process_ticket', 7, 0, 7, '2026-04-07 20:22:46', '2026-04-07 21:15:15');
-INSERT INTO `intent_metrics` VALUES ('7b19ef8d-1cbf-4a92-a928-6dd07b425e6e', '2026-04-07', 'general', 23, 0, 23, '2026-04-07 15:06:27', '2026-04-07 20:17:35');
-INSERT INTO `intent_metrics` VALUES ('a3e13ddb-5960-499a-831a-abb2a6eaf035', '2026-04-08', 'process_ticket', 1, 0, 1, '2026-04-08 13:43:55', '2026-04-08 13:43:55');
-INSERT INTO `intent_metrics` VALUES ('b3a87c67-fad2-490c-95cb-3c91af65c5ae', '2026-04-08', 'query_ticket', 2, 0, 2, '2026-04-08 00:08:10', '2026-04-08 13:43:09');
+INSERT INTO `intent_metrics` VALUES ('21316ae3-a4a6-40c0-9123-c129c097ecd1', '2026-04-07', 'query_ticket', 21, 0, 21, 0, 0, '2026-04-07 20:22:20', '2026-04-07 23:50:14');
+INSERT INTO `intent_metrics` VALUES ('64c489ab-d622-4d66-942f-740d72dca921', '2026-04-07', 'process_ticket', 7, 0, 7, 0, 0, '2026-04-07 20:22:46', '2026-04-07 21:15:15');
+INSERT INTO `intent_metrics` VALUES ('7b19ef8d-1cbf-4a92-a928-6dd07b425e6e', '2026-04-07', 'general', 23, 0, 23, 0, 0, '2026-04-07 15:06:27', '2026-04-07 20:17:35');
+INSERT INTO `intent_metrics` VALUES ('a3e13ddb-5960-499a-831a-abb2a6eaf035', '2026-04-08', 'process_ticket', 1, 0, 1, 0, 0, '2026-04-08 13:43:55', '2026-04-08 13:43:55');
+INSERT INTO `intent_metrics` VALUES ('b3a87c67-fad2-490c-95cb-3c91af65c5ae', '2026-04-08', 'query_ticket', 2, 0, 2, 0, 0, '2026-04-08 00:08:10', '2026-04-08 13:43:09');
 
 -- ----------------------------
 -- Table structure for knowledge_bases

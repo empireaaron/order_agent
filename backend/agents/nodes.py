@@ -46,7 +46,7 @@ def analyze_intent(state: AgentState) -> AgentState:
 
     # 记录意图识别（准确率稍后通过用户反馈更新）
     final_intent = intent if intent in valid_intents else "general"
-    metrics.record_intent_classification(final_intent)
+    metrics.record_intent_classification(final_intent, user_input=user_input)
 
     return {
         **state,

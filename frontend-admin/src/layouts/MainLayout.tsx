@@ -7,6 +7,7 @@ import {
   UserOutlined,
   LogoutOutlined,
   CustomerServiceOutlined,
+  LineChartOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useLocation, Outlet } from 'react-router-dom'
 import { useAuthStore } from '../stores/authStore'
@@ -88,6 +89,15 @@ const MainLayout: React.FC = () => {
         label: '用户管理',
       }
     )
+
+    // 只有管理员显示系统监控
+    if (user?.role?.code === 'admin') {
+      items.push({
+        key: '/metrics',
+        icon: <LineChartOutlined />,
+        label: '系统监控',
+      })
+    }
 
     return items
   }

@@ -73,6 +73,35 @@ class MetricsCollector:
             logger.error(f"Failed to get database session: {e}")
             return None
 
+    def _save_intent_log_to_db(self, log_id: str, intent: str, user_input: str,
+                                confidence: float = 1.0):
+        """保存意图识别明细日志到数据库"""
+        db = self._get_db()
+        if not db:
+            return
+
+        try:
+            from models import IntentClassificationLog
+
+            log = IntentClassificationLog(
+                id=log_id,
+                metric_date=date.today(),
+                intent=intent,
+                user_input=user_input[:500] if user_input else None,  # 限制长度
+                confidence=confidence,
+                is_sampled=False,
+                is_correct=None
+            )
+            db.add(log)
+            db.commit()
+            logger.debug(f"Saved intent log to DB: {log_id}, intent={intent}")
+
+        except Exception as e:
+            logger.error(f"Failed to save intent log: {e}")
+            db.rollback()
+        finally:
+            db.close()
+
     def _save_intent_to_db(self, intent: str, is_correct: Optional[bool] = None,
                            confidence: float = 1.0):
         """保存意图识别记录到数据库"""
@@ -106,7 +135,9 @@ class MetricsCollector:
                     intent=intent,
                     total=1,
                     correct=1 if is_correct else 0,
-                    confidence_sum=confidence
+                    confidence_sum=confidence,
+                    sampled=0,
+                    sampled_correct=0
                 )
                 db.add(record)
 
@@ -225,14 +256,19 @@ class MetricsCollector:
         ).start()
 
     def record_intent_classification(self, intent: str, confidence: float = 1.0,
-                                     is_correct: Optional[bool] = None):
+                                     is_correct: Optional[bool] = None,
+                                     user_input: Optional[str] = None):
         """记录意图识别结果
 
         Args:
             intent: 识别的意图类型
             confidence: 置信度 (0-1)
             is_correct: 是否正确（可选，用于后续准确率计算）
+            user_input: 用户输入内容（用于抽样标注）
         """
+        # 生成唯一ID用于关联明细日志
+        log_id = str(uuid4())
+
         # 更新内存统计
         with self._lock:
             self.intent_stats["total"] += 1
@@ -243,12 +279,20 @@ class MetricsCollector:
                     self.intent_stats["correct"] += 1
                     self.intent_stats["by_intent"][intent]["correct"] += 1
 
-        # 异步保存到数据库
+        # 异步保存到数据库（聚合统计）
         threading.Thread(
             target=self._save_intent_to_db,
             args=(intent, is_correct, confidence),
             daemon=True
         ).start()
+
+        # 异步保存明细日志（用于抽样标注）
+        if user_input:
+            threading.Thread(
+                target=self._save_intent_log_to_db,
+                args=(log_id, intent, user_input, confidence),
+                daemon=True
+            ).start()
 
     def record_error(self, error_type: str, endpoint: Optional[str] = None):
         """记录错误"""

@@ -14,6 +14,7 @@ import KnowledgeBasePage from './pages/KnowledgeBase'
 import KnowledgeBaseDetailPage from './pages/KnowledgeBaseDetail'
 import UsersPage from './pages/Users'
 import ChatWorkplace from './pages/ChatWorkplace'
+import MetricsPage from './pages/Metrics'
 
 function App() {
   const { isAuthenticated, checkAuth } = useAuthStore()
@@ -49,6 +50,7 @@ function App() {
           <Route path="knowledge/:id" element={<KnowledgeBaseDetailPage />} />
           <Route path="users" element={<UsersPage />} />
           <Route path="chat-workplace" element={<ChatWorkplace />} />
+          <Route path="metrics" element={<MetricsPage />} />
         </Route>
       </Routes>
     </ConfigProvider>

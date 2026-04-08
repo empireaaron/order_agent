@@ -233,12 +233,32 @@ CREATE TABLE IF NOT EXISTS `intent_metrics` (
     `total` INT DEFAULT 0 NOT NULL COMMENT '总识别次数',
     `correct` INT DEFAULT 0 NOT NULL COMMENT '正确次数',
     `confidence_sum` FLOAT DEFAULT 0.0 COMMENT '置信度总和（用于计算平均置信度）',
+    `sampled` INT DEFAULT 0 NOT NULL COMMENT '抽样检查数量',
+    `sampled_correct` INT DEFAULT 0 NOT NULL COMMENT '抽样中正确的数量',
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     UNIQUE KEY `uk_date_intent` (`metric_date`, `intent`),
     INDEX `idx_metric_date` (`metric_date`),
     INDEX `idx_intent` (`intent`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='意图识别统计表 - 按天聚合';
+
+-- 意图识别明细日志表 - 用于抽样标注
+CREATE TABLE IF NOT EXISTS `intent_classification_logs` (
+    `id` VARCHAR(36) PRIMARY KEY COMMENT '日志ID (UUID)',
+    `metric_date` DATE NOT NULL COMMENT '统计日期',
+    `intent` VARCHAR(50) NOT NULL COMMENT '识别的意图',
+    `user_input` TEXT DEFAULT NULL COMMENT '用户输入内容',
+    `confidence` FLOAT DEFAULT 1.0 COMMENT '置信度',
+    `is_sampled` TINYINT(1) DEFAULT 0 NOT NULL COMMENT '是否被抽样',
+    `is_correct` TINYINT(1) DEFAULT NULL COMMENT '人工标注是否正确（null表示未标注）',
+    `annotated_by` VARCHAR(36) DEFAULT NULL COMMENT '标注人ID',
+    `annotated_at` DATETIME DEFAULT NULL COMMENT '标注时间',
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    INDEX `idx_metric_date` (`metric_date`),
+    INDEX `idx_intent` (`intent`),
+    INDEX `idx_is_sampled` (`is_sampled`),
+    INDEX `idx_date_sampled` (`metric_date`, `is_sampled`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='意图识别明细日志表 - 用于抽样标注';
 
 -- API 响应时间统计表 - 按天、端点、方法聚合
 CREATE TABLE IF NOT EXISTS `api_metrics` (
