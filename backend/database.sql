@@ -1,7 +1,7 @@
 -- MySQL 数据库初始化脚本
 -- 数据库: ticket_bot
 
-CREATE DATABASE IF NOT EXISTS `ticket_bot` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS `ticket_bot` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 USE `ticket_bot`;
 
 -- 角色表
@@ -11,10 +11,10 @@ CREATE TABLE IF NOT EXISTS `roles` (
     `code` VARCHAR(50) NOT NULL UNIQUE COMMENT '角色代码',
     `description` VARCHAR(255) DEFAULT NULL COMMENT '角色描述',
     `permissions` JSON DEFAULT NULL COMMENT '权限列表',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `created_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) COMMENT '创建时间',
+    `updated_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '更新时间',
     INDEX `idx_name` (`name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='角色表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='角色表';
 
 -- 用户表
 CREATE TABLE IF NOT EXISTS `users` (
@@ -27,15 +27,15 @@ CREATE TABLE IF NOT EXISTS `users` (
     `role_id` INT NOT NULL DEFAULT 1 COMMENT '角色ID (外键)',
     `is_active` TINYINT(1) DEFAULT 1 COMMENT '是否激活',
     `is_verified` TINYINT(1) DEFAULT 0 COMMENT '是否验证邮箱',
-    `last_login_at` DATETIME DEFAULT NULL COMMENT '最后登录时间',
+    `last_login_at` DATETIME(6) DEFAULT NULL COMMENT '最后登录时间',
     `avatar_url` VARCHAR(500) DEFAULT NULL COMMENT '头像URL',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `created_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) COMMENT '创建时间',
+    `updated_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '更新时间',
     INDEX `idx_username` (`username`),
     INDEX `idx_email` (`email`),
     INDEX `idx_role_id` (`role_id`),
     CONSTRAINT `fk_users_role` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='用户表';
 
 -- 知识库表
 CREATE TABLE IF NOT EXISTS `knowledge_bases` (
@@ -48,12 +48,12 @@ CREATE TABLE IF NOT EXISTS `knowledge_bases` (
     `status` VARCHAR(20) DEFAULT 'active' COMMENT '状态: active, inactive, building',
     `embedding_model` VARCHAR(100) DEFAULT 'sentence-transformers/all-MiniLM-L6-v2' COMMENT '嵌入模型',
     `meta_data` JSON DEFAULT NULL COMMENT '元数据',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `created_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) COMMENT '创建时间',
+    `updated_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '更新时间',
     INDEX `idx_name` (`name`),
     INDEX `idx_owner_id` (`owner_id`),
     INDEX `idx_status` (`status`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识库表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='知识库表';
 
 -- 文档表
 CREATE TABLE IF NOT EXISTS `documents` (
@@ -68,13 +68,13 @@ CREATE TABLE IF NOT EXISTS `documents` (
     `status` VARCHAR(20) DEFAULT 'processing' COMMENT '状态: processing, indexed, failed',
     `error_message` TEXT DEFAULT NULL COMMENT '错误信息',
     `meta_data` JSON DEFAULT NULL COMMENT '元数据',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `created_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) COMMENT '创建时间',
+    `updated_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '更新时间',
     INDEX `idx_knowledge_base_id` (`knowledge_base_id`),
     INDEX `idx_status` (`status`),
     INDEX `idx_created_at` (`created_at`),
     CONSTRAINT `fk_documents_kb` FOREIGN KEY (`knowledge_base_id`) REFERENCES `knowledge_bases` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='文档表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='文档表';
 
 -- 工单表
 CREATE TABLE IF NOT EXISTS `tickets` (
@@ -89,10 +89,10 @@ CREATE TABLE IF NOT EXISTS `tickets` (
     `assigned_agent_id` VARCHAR(36) DEFAULT NULL COMMENT '分配的客服ID',
     `customer_info` JSON DEFAULT NULL COMMENT '客户信息 (JSON: name, email, phone)',
     `meta_data` JSON DEFAULT NULL COMMENT '元数据 (JSON)',
-    `resolved_at` DATETIME DEFAULT NULL COMMENT '解决时间',
-    `closed_at` DATETIME DEFAULT NULL COMMENT '关闭时间',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `resolved_at` DATETIME(6) DEFAULT NULL COMMENT '解决时间',
+    `closed_at` DATETIME(6) DEFAULT NULL COMMENT '关闭时间',
+    `created_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) COMMENT '创建时间',
+    `updated_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '更新时间',
     INDEX `idx_ticket_no` (`ticket_no`),
     INDEX `idx_status` (`status`),
     INDEX `idx_priority` (`priority`),
@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS `tickets` (
     INDEX `idx_customer_id` (`customer_id`),
     INDEX `idx_assigned_agent_id` (`assigned_agent_id`),
     INDEX `idx_created_at` (`created_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='工单表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='工单表';
 
 -- 工单消息表
 CREATE TABLE IF NOT EXISTS `ticket_messages` (
@@ -111,13 +111,13 @@ CREATE TABLE IF NOT EXISTS `ticket_messages` (
     `content` TEXT NOT NULL COMMENT '消息内容',
     `message_type` VARCHAR(20) DEFAULT 'text' COMMENT '消息类型: text, image, file',
     `is_read` TINYINT(1) DEFAULT 0 COMMENT '是否已读',
-    `read_at` DATETIME DEFAULT NULL COMMENT '阅读时间',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `read_at` DATETIME(6) DEFAULT NULL COMMENT '阅读时间',
+    `created_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) COMMENT '创建时间',
     INDEX `idx_ticket_id` (`ticket_id`),
     INDEX `idx_sender_id` (`sender_id`),
     INDEX `idx_created_at` (`created_at`),
     CONSTRAINT `fk_messages_ticket` FOREIGN KEY (`ticket_id`) REFERENCES `tickets` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='工单消息表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='工单消息表';
 
 -- 工单状态变更记录表
 CREATE TABLE IF NOT EXISTS `ticket_status_logs` (
@@ -127,12 +127,12 @@ CREATE TABLE IF NOT EXISTS `ticket_status_logs` (
     `to_status` VARCHAR(30) NOT NULL COMMENT '新状态',
     `changed_by_id` VARCHAR(36) NOT NULL COMMENT '变更者ID',
     `note` TEXT DEFAULT NULL COMMENT '备注',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `created_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) COMMENT '创建时间',
     INDEX `idx_ticket_id` (`ticket_id`),
     INDEX `idx_changed_by_id` (`changed_by_id`),
     INDEX `idx_created_at` (`created_at`),
     CONSTRAINT `fk_status_logs_ticket` FOREIGN KEY (`ticket_id`) REFERENCES `tickets` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='工单状态变更记录表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='工单状态变更记录表';
 
 -- 系统配置表
 CREATE TABLE IF NOT EXISTS `system_configs` (
@@ -140,19 +140,9 @@ CREATE TABLE IF NOT EXISTS `system_configs` (
     `key` VARCHAR(100) NOT NULL UNIQUE COMMENT '配置键',
     `value` JSON NOT NULL COMMENT '配置值',
     `description` VARCHAR(255) DEFAULT NULL COMMENT '描述',
-    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `updated_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '更新时间',
     INDEX `idx_key` (`key`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='系统配置表';
-
--- 插入默认角色
-INSERT INTO `roles` (`name`, `code`, `description`, `permissions`) VALUES
-('管理员', 'admin', '系统管理员，拥有所有权限', '[]'),
-('客服', 'agent', '客服人员，可以处理工单', '[]'),
-('运营', 'operator', '运营人员，可以查看数据和报表', '[]'),
-( '客户', 'customer', '普通客户', '[]');
-
--- 创建管理员用户 (密码: admin123)
--- 注意: 实际使用时需要通过 API 或脚本创建用户
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='系统配置表';
 
 -- ==========================================
 -- 实时聊天系统表
@@ -167,10 +157,10 @@ CREATE TABLE IF NOT EXISTS `chat_sessions` (
     `status` VARCHAR(20) DEFAULT 'waiting' COMMENT '状态: waiting(排队中), connected(已接入), closed(已关闭)',
     `request_type` VARCHAR(50) DEFAULT NULL COMMENT '客户请求类型: order/payment/technical/other',
     `initial_message` TEXT DEFAULT NULL COMMENT '客户初始消息',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `connected_at` DATETIME DEFAULT NULL COMMENT '客服接入时间',
-    `closed_at` DATETIME DEFAULT NULL COMMENT '会话关闭时间',
-    `last_message_at` DATETIME DEFAULT NULL COMMENT '最后消息时间',
+    `created_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) COMMENT '创建时间',
+    `connected_at` DATETIME(6) DEFAULT NULL COMMENT '客服接入时间',
+    `closed_at` DATETIME(6) DEFAULT NULL COMMENT '会话关闭时间',
+    `last_message_at` DATETIME(6) DEFAULT NULL COMMENT '最后消息时间',
     INDEX `idx_status` (`status`),
     INDEX `idx_agent_id` (`agent_id`),
     INDEX `idx_customer_id` (`customer_id`),
@@ -178,7 +168,7 @@ CREATE TABLE IF NOT EXISTS `chat_sessions` (
     CONSTRAINT `fk_chat_sessions_customer` FOREIGN KEY (`customer_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
     CONSTRAINT `fk_chat_sessions_agent` FOREIGN KEY (`agent_id`) REFERENCES `users` (`id`) ON DELETE SET NULL,
     CONSTRAINT `fk_chat_sessions_ticket` FOREIGN KEY (`ticket_id`) REFERENCES `tickets` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='聊天会话表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='聊天会话表';
 
 -- 聊天记录表
 -- sender_id 使用规则:
@@ -196,8 +186,8 @@ CREATE TABLE IF NOT EXISTS `chat_messages` (
     `message_type` VARCHAR(20) DEFAULT 'text' COMMENT '消息类型: text/image/file/system',
     `customer_id` VARCHAR(36) DEFAULT NULL COMMENT '客户ID (用于简化历史消息查询)',
     `is_read` TINYINT(1) DEFAULT 0 COMMENT '是否已读',
-    `read_at` DATETIME DEFAULT NULL COMMENT '阅读时间',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `read_at` DATETIME(6) DEFAULT NULL COMMENT '阅读时间',
+    `created_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) COMMENT '创建时间',
     INDEX `idx_session_id` (`session_id`),
     INDEX `idx_created_at` (`created_at`),
     INDEX `idx_sender_id` (`sender_id`),
@@ -206,7 +196,7 @@ CREATE TABLE IF NOT EXISTS `chat_messages` (
     CONSTRAINT `fk_chat_messages_session` FOREIGN KEY (`session_id`) REFERENCES `chat_sessions` (`id`) ON DELETE CASCADE,
     CONSTRAINT `fk_chat_messages_sender` FOREIGN KEY (`sender_id`) REFERENCES `users` (`id`) ON DELETE SET NULL,
     CONSTRAINT `fk_chat_messages_customer` FOREIGN KEY (`customer_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='聊天记录表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='聊天记录表';
 
 -- 客服在线状态表
 CREATE TABLE IF NOT EXISTS `agent_status` (
@@ -216,10 +206,10 @@ CREATE TABLE IF NOT EXISTS `agent_status` (
     `max_sessions` INT DEFAULT 5 COMMENT '最大并发会话数',
     `total_sessions_today` INT DEFAULT 0 COMMENT '今日总会话数',
     `total_messages_today` INT DEFAULT 0 COMMENT '今日总消息数',
-    `last_heartbeat` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '最后心跳时间',
-    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `last_heartbeat` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) COMMENT '最后心跳时间',
+    `updated_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '更新时间',
     CONSTRAINT `fk_agent_status_agent` FOREIGN KEY (`agent_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='客服在线状态表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='客服在线状态表';
 
 -- ==========================================
 -- 监控指标统计表
@@ -235,12 +225,12 @@ CREATE TABLE IF NOT EXISTS `intent_metrics` (
     `confidence_sum` FLOAT DEFAULT 0.0 COMMENT '置信度总和（用于计算平均置信度）',
     `sampled` INT DEFAULT 0 NOT NULL COMMENT '抽样检查数量',
     `sampled_correct` INT DEFAULT 0 NOT NULL COMMENT '抽样中正确的数量',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `created_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) COMMENT '创建时间',
+    `updated_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '更新时间',
     UNIQUE KEY `uk_date_intent` (`metric_date`, `intent`),
     INDEX `idx_metric_date` (`metric_date`),
     INDEX `idx_intent` (`intent`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='意图识别统计表 - 按天聚合';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='意图识别统计表 - 按天聚合';
 
 -- 意图识别明细日志表 - 用于抽样标注
 CREATE TABLE IF NOT EXISTS `intent_classification_logs` (
@@ -252,13 +242,13 @@ CREATE TABLE IF NOT EXISTS `intent_classification_logs` (
     `is_sampled` TINYINT(1) DEFAULT 0 NOT NULL COMMENT '是否被抽样',
     `is_correct` TINYINT(1) DEFAULT NULL COMMENT '人工标注是否正确（null表示未标注）',
     `annotated_by` VARCHAR(36) DEFAULT NULL COMMENT '标注人ID',
-    `annotated_at` DATETIME DEFAULT NULL COMMENT '标注时间',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `annotated_at` DATETIME(6) DEFAULT NULL COMMENT '标注时间',
+    `created_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) COMMENT '创建时间',
     INDEX `idx_metric_date` (`metric_date`),
     INDEX `idx_intent` (`intent`),
     INDEX `idx_is_sampled` (`is_sampled`),
     INDEX `idx_date_sampled` (`metric_date`, `is_sampled`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='意图识别明细日志表 - 用于抽样标注';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='意图识别明细日志表 - 用于抽样标注';
 
 -- API 响应时间统计表 - 按天、端点、方法聚合
 CREATE TABLE IF NOT EXISTS `api_metrics` (
@@ -271,12 +261,12 @@ CREATE TABLE IF NOT EXISTS `api_metrics` (
     `latency_sum_ms` FLOAT DEFAULT 0.0 COMMENT '总响应时间（毫秒）',
     `latency_min_ms` FLOAT DEFAULT 0.0 COMMENT '最小响应时间',
     `latency_max_ms` FLOAT DEFAULT 0.0 COMMENT '最大响应时间',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `created_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) COMMENT '创建时间',
+    `updated_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '更新时间',
     UNIQUE KEY `uk_date_endpoint_method` (`metric_date`, `endpoint`, `method`),
     INDEX `idx_metric_date` (`metric_date`),
     INDEX `idx_endpoint` (`endpoint`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='API 响应时间统计表 - 按天聚合';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='API 响应时间统计表 - 按天聚合';
 
 -- 错误统计表 - 按天、错误类型聚合
 CREATE TABLE IF NOT EXISTS `error_metrics` (
@@ -285,9 +275,28 @@ CREATE TABLE IF NOT EXISTS `error_metrics` (
     `error_type` VARCHAR(100) NOT NULL COMMENT '错误类型: HTTP404/HTTP500/ValidationError等',
     `endpoint` VARCHAR(255) DEFAULT NULL COMMENT '发生错误的端点（可选）',
     `count` INT DEFAULT 0 NOT NULL COMMENT '错误次数',
-    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `created_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) COMMENT '创建时间',
+    `updated_at` DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '更新时间',
     UNIQUE KEY `uk_date_type_endpoint` (`metric_date`, `error_type`, `endpoint`),
     INDEX `idx_metric_date` (`metric_date`),
     INDEX `idx_error_type` (`error_type`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='错误统计表 - 按天聚合';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='错误统计表 - 按天聚合';
+
+-- 插入默认角色
+INSERT INTO `roles` (`name`, `code`, `description`, `permissions`) VALUES
+('管理员', 'admin', '系统管理员，拥有所有权限', '[]'),
+('客服', 'agent', '客服人员，可以处理工单', '[]'),
+('运营', 'operator', '运营人员，可以查看数据和报表', '[]'),
+( '客户', 'customer', '普通客户', '[]');
+-- ----------------------------
+-- Records of users
+-- ----------------------------
+INSERT INTO `users` VALUES ('0912d5f2-acdd-492e-852f-0b915524cafc', 'aaron', '592235963@qq.com', '$2b$12$et1MM2G5pbTsrRRAfnYaNONQLt/UowEBuagZQsWUnqA22rfvh2mTe', 'aaron', NULL, 2, 1, 0, '2026-04-09 15:15:20.000000', '2026-04-04 03:33:26.000000', '2026-04-09 15:15:20.000000', NULL);
+INSERT INTO `users` VALUES ('230c67e9-4f24-448e-8bba-03adb9f88b2b', 'xjy', '592235960@qq.com', '$2b$12$heMzkM.w1CkfrWthYmGcwe6f6uNDhlEcWjq0LgntFo63EHdrNS1x6', 'xjy', NULL, 4, 1, 0, NULL, '2026-04-05 11:51:34.000000', '2026-04-05 11:51:34.000000', NULL);
+INSERT INTO `users` VALUES ('2e0ed49e-fd72-4b94-9c33-fcd92719fa4d', 'yy', '592235981@qq.com', '$2b$12$yIDdhX4vVyj5MP.8qisbwOe7ApUwDg8Gc8SCxE3ok/KcvOcI08dd6', 'yy', NULL, 3, 1, 0, '2026-04-08 22:05:36.000000', '2026-04-08 22:05:30.000000', '2026-04-08 22:05:36.000000', NULL);
+INSERT INTO `users` VALUES ('7b023ee9-a64f-47f8-8ddb-f621b673ee5c', 'admin', 'admin@example.com', '$2b$12$W.FoBpg6qrtU5v79Tar52eTr23NqomEgncxgHQJF4mhW6u6WwYvx.', '管理员', '13918282671', 1, 1, 0, '2026-04-09 16:31:04.704094', '2026-04-03 15:51:49.000000', '2026-04-09 16:31:04.724990', NULL);
+INSERT INTO `users` VALUES ('9945a367-2c08-48e2-b172-ae16deeabf00', 'xlh', '592235962@qq.com', '$2b$12$HOzPDRjUNedD/dgktwMPBu9twn0ev7kHwwO7.Gl3Ou4RCyLrTkK8m', 'xu', NULL, 4, 1, 0, '2026-04-09 16:33:47.708097', '2026-04-04 03:32:30.000000', '2026-04-09 16:33:47.708528', NULL);
+INSERT INTO `users` VALUES ('a3ff98db-713d-47e4-bbfd-e466be173419', 'hxy', '592235965@qq.com', '$2b$12$km.ZhBLHSDyzI8j4wvSG.eALsT.XupPfSjJ5TrehkZ2Vt2TyUnj/W', 'hxy', NULL, 3, 1, 0, '2026-04-05 11:49:49.000000', '2026-04-04 03:45:39.000000', '2026-04-05 11:49:49.000000', NULL);
+
+-- 创建管理员用户 (密码: admin123)
+-- 注意: 实际使用时需要通过 API 或脚本创建用户
