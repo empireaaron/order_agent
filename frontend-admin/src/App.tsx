@@ -15,6 +15,7 @@ import KnowledgeBaseDetailPage from './pages/KnowledgeBaseDetail'
 import UsersPage from './pages/Users'
 import ChatWorkplace from './pages/ChatWorkplace'
 import MetricsPage from './pages/Metrics'
+import SamplingAnnotationPage from './pages/SamplingAnnotation'
 
 function App() {
   const { isAuthenticated, checkAuth } = useAuthStore()
@@ -51,6 +52,7 @@ function App() {
           <Route path="users" element={<UsersPage />} />
           <Route path="chat-workplace" element={<ChatWorkplace />} />
           <Route path="metrics" element={<MetricsPage />} />
+          <Route path="sampling-annotation" element={<SamplingAnnotationPage />} />
         </Route>
       </Routes>
     </ConfigProvider>

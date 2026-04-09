@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Card,
   Row,
@@ -20,10 +21,8 @@ import {
   WifiOutlined,
   AimOutlined,
   CheckCircleOutlined,
-  CheckOutlined,
-  CloseOutlined,
 } from '@ant-design/icons'
-import { Button, message, Progress, DatePicker } from 'antd'
+import { Button, Progress, DatePicker } from 'antd'
 import {
   LineChart,
   Line,
@@ -85,14 +84,6 @@ interface WebSocketMetricsData {
 }
 
 // 抽样标注相关类型
-interface SampleLog {
-  log_id: string
-  intent: string
-  user_input: string | null
-  confidence: number
-  created_at: string
-}
-
 interface SampleStats {
   period_days: number
   total_logs: number
@@ -115,6 +106,7 @@ const COLORS = ['#1890ff', '#52c41a', '#faad14', '#f5222d', '#722ed1', '#13c2c2'
 const CATEGORY_COLORS = ['#1890ff', '#52c41a', '#faad14', '#f5222d', '#722ed1']
 
 const MetricsPage: React.FC = () => {
+  const navigate = useNavigate()
   const [timeRange, setTimeRange] = useState<TimeRange>('7')
   const [customDateRange, setCustomDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -128,9 +120,6 @@ const MetricsPage: React.FC = () => {
 
   // 抽样标注状态
   const [sampleStats, setSampleStats] = useState<SampleStats | null>(null)
-  const [sampleLogs, setSampleLogs] = useState<SampleLog[]>([])
-  const [samplingLoading, setSamplingLoading] = useState(false)
-  const [annotatingId, setAnnotatingId] = useState<string | null>(null)
 
   // 获取所有数据
   const fetchData = async () => {
@@ -181,10 +170,16 @@ const MetricsPage: React.FC = () => {
 
   useEffect(() => {
     fetchData()
+    // 同时刷新抽样标注统计数据
+    fetchSampleStats()
   }, [timeRange, customDateRange])
 
   // 获取抽样统计
   const fetchSampleStats = async () => {
+    // 自定义模式下未选择日期范围时不调用接口
+    if (timeRange === 'custom' && !customDateRange) {
+      return
+    }
     try {
       let url = '/metrics/intent/sample-stats?'
       if (timeRange === 'custom' && customDateRange) {
@@ -196,46 +191,6 @@ const MetricsPage: React.FC = () => {
       setSampleStats(res.data)
     } catch (error) {
       console.error('获取抽样统计失败:', error)
-    }
-  }
-
-  // 抽取样本
-  const handleSample = async () => {
-    setSamplingLoading(true)
-    try {
-      let url = '/metrics/intent/sample?limit=10&'
-      if (timeRange === 'custom' && customDateRange) {
-        url += `start_date=${customDateRange[0].format('YYYY-MM-DD')}&end_date=${customDateRange[1].format('YYYY-MM-DD')}`
-      } else {
-        url += `days=${parseInt(timeRange)}`
-      }
-      const res = await api.get(url)
-      setSampleLogs(res.data)
-      await fetchSampleStats()
-      message.success(`成功抽取 ${res.data.length} 条记录`)
-    } catch (error) {
-      message.error('抽取样本失败')
-    } finally {
-      setSamplingLoading(false)
-    }
-  }
-
-  // 提交标注
-  const handleAnnotate = async (logId: string, isCorrect: boolean) => {
-    setAnnotatingId(logId)
-    try {
-      await api.post('/metrics/intent/annotate', {
-        log_id: logId,
-        is_correct: isCorrect,
-      })
-      message.success('标注成功')
-      // 移除已标注的记录
-      setSampleLogs((prev) => prev.filter((log) => log.log_id !== logId))
-      await fetchSampleStats()
-    } catch (error) {
-      message.error('标注失败')
-    } finally {
-      setAnnotatingId(null)
     }
   }
 
@@ -830,77 +785,20 @@ const MetricsPage: React.FC = () => {
                   </Row>
                   <Row style={{ marginTop: 16 }}>
                     <Col xs={24}>
-                      <Button
-                        type="primary"
-                        onClick={handleSample}
-                        loading={samplingLoading}
-                        disabled={sampleLogs.length > 0}
-                      >
-                        抽取样本 (10条)
+                      <Button type="primary" onClick={() => navigate('/sampling-annotation')}>
+                        去标注
                       </Button>
                       <span style={{ marginLeft: 16, color: '#999' }}>
-                        {sampleLogs.length > 0 && '请先完成当前样本的标注'}
+                        前往抽样标注页面进行样本抽取和人工标注
                       </span>
                     </Col>
                   </Row>
                 </Card>
               </Col>
 
-              {/* 抽样标注列表 */}
+              {/* 按意图统计 */}
               <Col xs={24}>
-                {sampleLogs.length > 0 && (
-                  <Card title="待标注样本" size="small">
-                    <Space direction="vertical" style={{ width: '100%' }} size="large">
-                      {sampleLogs.map((log) => (
-                        <Card
-                          key={log.log_id}
-                          size="small"
-                          type="inner"
-                          title={
-                            <Space>
-                              <Tag color="blue">{log.intent}</Tag>
-                              <span style={{ color: '#999', fontSize: 12 }}>
-                                置信度: {(log.confidence * 100).toFixed(1)}%
-                              </span>
-                            </Space>
-                          }
-                          actions={[
-                            <Button
-                              key="correct"
-                              type="primary"
-                              icon={<CheckOutlined />}
-                              size="small"
-                              loading={annotatingId === log.log_id}
-                              onClick={() => handleAnnotate(log.log_id, true)}
-                            >
-                              正确
-                            </Button>,
-                            <Button
-                              key="incorrect"
-                              danger
-                              icon={<CloseOutlined />}
-                              size="small"
-                              loading={annotatingId === log.log_id}
-                              onClick={() => handleAnnotate(log.log_id, false)}
-                            >
-                              错误
-                            </Button>,
-                          ]}
-                        >
-                          <p><strong>用户输入:</strong></p>
-                          <p style={{ background: '#f5f5f5', padding: 12, borderRadius: 4 }}>
-                            {log.user_input || '（无内容）'}
-                          </p>
-                          <p style={{ color: '#999', fontSize: 12 }}>
-                            识别意图: <Tag>{log.intent}</Tag>
-                          </p>
-                        </Card>
-                      ))}
-                    </Space>
-                  </Card>
-                )}
-
-                {sampleLogs.length === 0 && sampleStats && sampleStats.annotated > 0 && (
+                {sampleStats && sampleStats.annotated > 0 ? (
                   <Card title="按意图统计" size="small">
                     <Row gutter={[16, 16]}>
                       {Object.entries(sampleStats?.by_intent || {}).map(([intent, data]) => (
@@ -923,13 +821,11 @@ const MetricsPage: React.FC = () => {
                       ))}
                     </Row>
                   </Card>
-                )}
-
-                {sampleLogs.length === 0 && sampleStats?.annotated === 0 && (
+                ) : (
                   <div style={{ textAlign: 'center', padding: '60px', color: '#999' }}>
                     <CheckCircleOutlined style={{ fontSize: 48, marginBottom: 16 }} />
-                    <p>点击上方"抽取样本"按钮开始人工标注</p>
-                    <p style={{ fontSize: 12 }}>抽样标注用于验证AI意图识别的真实准确率</p>
+                    <p>暂无标注数据</p>
+                    <p style={{ fontSize: 12 }}>点击上方"去标注"按钮进行样本抽取和人工标注</p>
                   </div>
                 )}
               </Col>

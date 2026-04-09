@@ -101,8 +101,13 @@ async def get_intent_trend(
         query_end_date = end_date
         period_days = (end_date - start_date).days + 1
     elif days:
-        query_start_date = date.today() - timedelta(days=days)
-        query_end_date = date.today()
+        # days=1 表示今日（当天），days>1 表示近N天
+        if days == 1:
+            query_start_date = date.today()
+            query_end_date = date.today()
+        else:
+            query_start_date = date.today() - timedelta(days=days)
+            query_end_date = date.today()
         period_days = days
     else:
         # 默认近7天
@@ -187,8 +192,13 @@ async def get_error_metrics(
         query_start_date = start_date
         query_end_date = end_date
     elif days:
-        query_start_date = date.today() - timedelta(days=days)
-        query_end_date = date.today()
+        # days=1 表示今日（当天），days>1 表示近N天
+        if days == 1:
+            query_start_date = date.today()
+            query_end_date = date.today()
+        else:
+            query_start_date = date.today() - timedelta(days=days)
+            query_end_date = date.today()
     else:
         # 默认近7天
         query_start_date = date.today() - timedelta(days=7)
@@ -254,8 +264,13 @@ async def get_intent_sample(
         query_start_date = start_date
         query_end_date = end_date
     elif days:
-        query_start_date = date.today() - timedelta(days=days)
-        query_end_date = date.today()
+        # days=1 表示今日（当天），days>1 表示近N天
+        if days == 1:
+            query_start_date = date.today()
+            query_end_date = date.today()
+        else:
+            query_start_date = date.today() - timedelta(days=days)
+            query_end_date = date.today()
     else:
         # 默认近7天
         query_start_date = date.today() - timedelta(days=7)
@@ -351,8 +366,13 @@ async def get_intent_sample_stats(
         query_end_date = end_date
         period_days = (end_date - start_date).days + 1
     elif days:
-        query_start_date = date.today() - timedelta(days=days)
-        query_end_date = date.today()
+        # days=1 表示今日（当天），days>1 表示近N天
+        if days == 1:
+            query_start_date = date.today()
+            query_end_date = date.today()
+        else:
+            query_start_date = date.today() - timedelta(days=days)
+            query_end_date = date.today()
         period_days = days
     else:
         # 默认近7天
