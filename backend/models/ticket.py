@@ -46,7 +46,7 @@ class User(Base):
     role_id = Column(Integer, ForeignKey("roles.id"), default=1, comment="角色ID")
     is_active = Column(Boolean, default=True, comment="是否激活")
     is_verified = Column(Boolean, default=False, comment="是否验证邮箱")
-    last_login_at = Column(DateTime, nullable=True, comment="最后登录时间")
+    last_login_at = Column(DateTime(timezone=True), nullable=True, comment="最后登录时间")
     avatar_url = Column(String(500), nullable=True, comment="头像URL")
 
     created_at = Column(DateTime, default=now, comment="创建时间")
@@ -113,11 +113,11 @@ class Ticket(Base):
     meta_data = Column(JSON, nullable=True, comment="元数据 (JSON)")
 
     # 时间字段
-    resolved_at = Column(DateTime, nullable=True, comment="解决时间")
-    closed_at = Column(DateTime, nullable=True, comment="关闭时间")
+    resolved_at = Column(DateTime(timezone=True), nullable=True, comment="解决时间")
+    closed_at = Column(DateTime(timezone=True), nullable=True, comment="关闭时间")
 
-    created_at = Column(DateTime, default=now, comment="创建时间")
-    updated_at = Column(DateTime, default=now, onupdate=now, comment="更新时间")
+    created_at = Column(DateTime(timezone=True), default=now, comment="创建时间")
+    updated_at = Column(DateTime(timezone=True), default=now, onupdate=now, comment="更新时间")
 
     # 关系
     customer = relationship("User", back_populates="tickets", foreign_keys=[customer_id])
@@ -158,9 +158,9 @@ class TicketMessage(Base):
     content = Column(Text, nullable=False, comment="消息内容")
     message_type = Column(String(20), default="text", comment="消息类型: text, image, file")
     is_read = Column(Boolean, default=False, comment="是否已读")
-    read_at = Column(DateTime, nullable=True, comment="阅读时间")
+    read_at = Column(DateTime(timezone=True), nullable=True, comment="阅读时间")
 
-    created_at = Column(DateTime, default=now, comment="创建时间")
+    created_at = Column(DateTime(timezone=True), default=now, comment="创建时间")
 
     # 关系
     ticket = relationship("Ticket", back_populates="messages")

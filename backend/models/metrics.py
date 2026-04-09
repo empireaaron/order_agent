@@ -21,8 +21,8 @@ class IntentMetrics(Base):
     confidence_sum = Column(Float, default=0.0)  # 置信度总和（用于计算平均置信度）
     sampled = Column(Integer, default=0, nullable=False)  # 抽样检查数量
     sampled_correct = Column(Integer, default=0, nullable=False)  # 抽样中正确的数量
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     __table_args__ = (
         Index('ix_intent_metrics_date_intent', 'metric_date', 'intent', unique=True),
@@ -63,8 +63,8 @@ class ApiMetrics(Base):
     latency_sum_ms = Column(Float, default=0.0)  # 总响应时间（毫秒）
     latency_min_ms = Column(Float, default=0.0)  # 最小响应时间
     latency_max_ms = Column(Float, default=0.0)  # 最大响应时间
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     __table_args__ = (
         Index('ix_api_metrics_date_endpoint', 'metric_date', 'endpoint', 'method', unique=True),
@@ -87,8 +87,8 @@ class ErrorMetrics(Base):
     error_type = Column(String(100), nullable=False, index=True)  # 错误类型
     endpoint = Column(String(255), nullable=True, index=True)  # 发生错误的端点
     count = Column(Integer, default=0, nullable=False)
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     __table_args__ = (
         Index('ix_error_metrics_date_type', 'metric_date', 'error_type', 'endpoint', unique=True),
@@ -107,8 +107,8 @@ class IntentClassificationLog(Base):
     is_sampled = Column(Boolean, default=False, nullable=False, index=True)  # 是否被抽样
     is_correct = Column(Boolean, nullable=True)  # 人工标注是否正确（null表示未标注）
     annotated_by = Column(String(36), nullable=True)  # 标注人ID
-    annotated_at = Column(DateTime, nullable=True)  # 标注时间
-    created_at = Column(DateTime, server_default=func.now())
+    annotated_at = Column(DateTime(timezone=True), nullable=True)  # 标注时间
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
         Index('ix_intent_logs_date_sampled', 'metric_date', 'is_sampled'),

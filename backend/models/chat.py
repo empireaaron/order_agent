@@ -28,11 +28,11 @@ class ChatSession(Base):
     request_type = Column(String(50), nullable=True, comment="客户请求类型: order/payment/technical/other")
     initial_message = Column(Text, nullable=True, comment="客户初始消息")
 
-    # 时间戳
-    created_at = Column(DateTime, default=now)
-    connected_at = Column(DateTime, nullable=True, comment="客服接入时间")
-    closed_at = Column(DateTime, nullable=True, comment="会话关闭时间")
-    last_message_at = Column(DateTime, nullable=True, comment="最后消息时间")
+    # 时间戳 - 使用带时区的DateTime
+    created_at = Column(DateTime(timezone=True), default=now)
+    connected_at = Column(DateTime(timezone=True), nullable=True, comment="客服接入时间")
+    closed_at = Column(DateTime(timezone=True), nullable=True, comment="会话关闭时间")
+    last_message_at = Column(DateTime(timezone=True), nullable=True, comment="最后消息时间")
 
     # 关联
     customer = relationship("User", foreign_keys=[customer_id], back_populates="customer_sessions")
@@ -64,9 +64,9 @@ class ChatMessage(Base):
 
     # 是否已读
     is_read = Column(String(1), default="0", comment="是否已读: 0/1")
-    read_at = Column(DateTime, nullable=True)
+    read_at = Column(DateTime(timezone=True), nullable=True)
 
-    created_at = Column(DateTime, default=now)
+    created_at = Column(DateTime(timezone=True), default=now)
 
     # 关联
     session = relationship("ChatSession", back_populates="messages")
@@ -100,8 +100,8 @@ class AgentStatus(Base):
     total_sessions_today = Column(String(10), default="0")
     total_messages_today = Column(String(10), default="0")
 
-    last_heartbeat = Column(DateTime, default=now, comment="最后心跳时间")
-    updated_at = Column(DateTime, default=now, onupdate=now)
+    last_heartbeat = Column(DateTime(timezone=True), default=now, comment="最后心跳时间")
+    updated_at = Column(DateTime(timezone=True), default=now, onupdate=now)
 
     # 关联
     agent = relationship("User")
