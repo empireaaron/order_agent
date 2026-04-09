@@ -343,7 +343,7 @@ async def get_intent_sample_stats(
         start_date: 开始日期（自定义范围）
         end_date: 结束日期（自定义范围）
     """
-    from sqlalchemy import func as sql_func
+    from sqlalchemy import func as sql_func, case
 
     # 计算日期范围
     if start_date and end_date:
@@ -388,7 +388,7 @@ async def get_intent_sample_stats(
     intent_stats = db.query(
         IntentClassificationLog.intent,
         sql_func.count(IntentClassificationLog.id).label('total'),
-        sql_func.sum(sql_func.case([(IntentClassificationLog.is_correct == True, 1)], else_=0)).label('correct')
+        sql_func.sum(case((IntentClassificationLog.is_correct == True, 1), else_=0)).label('correct')
     ).filter(
         IntentClassificationLog.metric_date >= query_start_date,
         IntentClassificationLog.metric_date <= query_end_date,

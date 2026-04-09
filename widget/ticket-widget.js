@@ -748,27 +748,10 @@
         if (response.ok) {
           const data = await response.json();
           this.hideTyping();
-          // 显示智能体回复
+          // 显示智能体回复（AI回复中已包含工单信息，无需额外显示卡片）
           this.addMessage(data.response, 'agent');
           // 保存AI回复到数据库
           this.saveAIMessageToDatabase('ai', data.response);
-
-          // 如果创建了工单（根据意图判断），显示工单信息
-          if (data.ticket_info && data.ticket_info.ticket_no && data.intent === 'create_ticket') {
-            const ticketInfo = document.createElement('div');
-            ticketInfo.className = 'ticket-widget-message agent';
-            ticketInfo.innerHTML = `
-              <div class="ticket-widget-message-content" style="background: #f6ffed; border: 1px solid #b7eb8f;">
-                <div style="font-weight: bold; margin-bottom: 4px;">📝 工单已创建</div>
-                <div>编号：${data.ticket_info.ticket_no}</div>
-                <div>标题：${data.ticket_info.title}</div>
-                <div>优先级：${data.ticket_info.priority || 'normal'}</div>
-              </div>
-            `;
-            const body = this.shadowRoot.getElementById('ticket-widget-body');
-            body.appendChild(ticketInfo);
-            body.scrollTop = body.scrollHeight;
-          }
         } else {
           throw new Error('Failed to get response');
         }
