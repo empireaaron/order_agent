@@ -37,15 +37,41 @@ WebSocket 双端点设计：
 4. 建立 WebSocket 连接进行实时消息收发
 5. 客服在"聊天工作台" (`frontend-admin/src/pages/ChatWorkplace/`) 处理会话
 
+### 监控与指标系统
+
+系统内置监控指标收集（仅管理员可见）：
+- **API 性能**：自动通过中间件收集响应时间、错误率（`backend/middleware/metrics.py`）
+- **意图识别统计**：记录 AI 意图识别次数、准确率、置信度（`backend/utils/metrics.py`）
+- **错误统计**：按错误类型和端点聚合（`backend/models/metrics.py`）
+- **WebSocket 统计**：连接数、消息收发量
+- **抽样标注**：管理员可抽取意图识别日志进行人工标注，计算真实准确率（`frontend-admin/src/pages/SamplingAnnotation.tsx`）
+
+监控页面：`frontend-admin/src/pages/Metrics.tsx`
+监控模型：`backend/models/metrics.py`（`IntentMetrics`、`ApiMetrics`、`ErrorMetrics`、`IntentClassificationLog`）
+
+### 记忆存储模块
+
+`backend/memory/` 提供短期记忆存储：
+- **自动后端切换**：Redis 可用时使用 Redis，否则回退到内存（`backend="auto"`）
+- **自动摘要**：消息超过 10 条时自动压缩早期消息为摘要
+- **过期策略**：默认 30 分钟无活动自动清理
+
+详见 `backend/memory/README.md`
+
 ### 关键目录
 
 - `backend/agents/` - LangGraph 节点和状态定义
 - `backend/api/v1/` - REST API 路由
-- `backend/models/` - SQLAlchemy 模型（用户、工单、知识库、聊天）
+- `backend/models/` - SQLAlchemy 模型（用户、工单、知识库、聊天、监控指标）
 - `backend/websocket/` - WebSocket 管理器（通用 + 聊天）
+- `backend/memory/` - 短期记忆存储（内存/Redis 双后端）
+- `backend/middleware/` - FastAPI 中间件（监控指标等）
+- `backend/utils/metrics.py` - 监控指标收集器
 - `frontend-admin/src/stores/` - Zustand 状态管理
 - `frontend-admin/src/services/` - API 客户端
-- `widget/ticket-widget.js` - 可嵌入挂件（约1000行，Shadow DOM 隔离样式）
+- `frontend-admin/src/pages/Metrics.tsx` - 系统监控页面
+- `frontend-admin/src/pages/SamplingAnnotation.tsx` - 抽样标注页面
+- `widget/ticket-widget.js` - 可嵌入挂件（Shadow DOM 隔离样式）
 
 ## 常用命令
 
@@ -81,6 +107,7 @@ docker-compose up -d
 | Milvus | 19530 | 向量数据库，用于知识库语义搜索 |
 | MinIO API | 9000 | 文件存储 |
 | MinIO 控制台 | 9001 | 文件管理界面 |
+| Redis | 6379 | 可选，用于短期记忆存储 |
 
 ## 核心概念
 
@@ -91,6 +118,8 @@ docker-compose up -d
 **挂件会话持久化**：Widget 将 `session_id` 和 `token` 保存在 localStorage 中，页面刷新后自动重连恢复会话。
 
 **客服状态管理**：客服通过 `POST /api/v1/agent/online` 切换在线/离线状态，只有在线客服才会被分配新会话。
+
+**监控数据存储**：API 指标主要保存在内存中用于实时查询；意图识别、错误统计等会异步持久化到 MySQL 的 `*_metrics` 表中。
 
 ## VS Code 调试
 
