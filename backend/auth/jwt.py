@@ -2,14 +2,18 @@
 JWT 认证工具
 """
 import hashlib
+import logging
 from datetime import timedelta
 from typing import Optional
 
 import bcrypt
-from jose import jwt
+from jose import jwt, JWTError, ExpiredSignatureError
+from jose.exceptions import JWTClaimsError
 
 from config import settings
 from utils.timezone import now
+
+logger = logging.getLogger(__name__)
 
 
 def _prehash_password(password: str) -> bytes:
@@ -59,5 +63,15 @@ def decode_token(token: str) -> Optional[dict]:
     try:
         payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         return payload
-    except Exception:
+    except ExpiredSignatureError:
+        logger.debug("JWT token has expired")
+        return None
+    except JWTClaimsError as e:
+        logger.warning(f"JWT claims error: {e}")
+        return None
+    except JWTError as e:
+        logger.warning(f"JWT decode error: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error decoding JWT: {e}", exc_info=True)
         return None

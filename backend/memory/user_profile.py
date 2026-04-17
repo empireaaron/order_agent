@@ -1,10 +1,13 @@
 """
 用户画像管理 - 查询用户历史信息和工单记录
 """
+import logging
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 from models import User, Ticket, TicketMessage
 from db.session import get_db
+
+logger = logging.getLogger(__name__)
 
 
 class UserProfileManager:
@@ -101,7 +104,7 @@ class UserProfileManager:
             return profile
 
         except Exception as e:
-            print(f"[ERROR] 获取用户画像失败: {e}")
+            logger.error("获取用户画像失败: %s", e)
             return {}
         finally:
             if should_close_db:
@@ -204,7 +207,7 @@ class UserProfileManager:
             return "\n".join(context_parts)
 
         except Exception as e:
-            print(f"[ERROR] 获取工单上下文失败: {e}")
+            logger.error("获取工单上下文失败: %s", e)
             return ""
         finally:
             if should_close_db:

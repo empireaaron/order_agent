@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from db.session import get_db
-from auth.middleware import get_current_active_user
+from auth.middleware import get_current_active_user, ROLE_ADMIN
 from models import User, Role
 from schemas.user import UserCreate, UserUpdate, User as UserSchema, RoleCreate, Role as RoleSchema
 
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/users", tags=["Users"])
 
 def require_admin(current_user: User = Depends(get_current_active_user)):
     """要求管理员权限"""
-    if current_user.role.code != "admin":
+    if current_user.role.code != ROLE_ADMIN:
         raise HTTPException(status_code=403, detail="Admin permission required")
     return current_user
 

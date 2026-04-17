@@ -1,26 +1,23 @@
 """
 MinIO 工具函数
 """
-import os
+import logging
 from io import BytesIO
 from minio import Minio
 from minio.error import S3Error
 
-# MinIO 配置
-MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
-MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
-MINIO_BUCKET = os.getenv("MINIO_BUCKET", "documents")
-MINIO_SECURE = os.getenv("MINIO_SECURE", "false").lower() == "true"
+from config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def get_minio_client():
     """获取 MinIO 客户端"""
     return Minio(
-        MINIO_ENDPOINT,
-        access_key=MINIO_ACCESS_KEY,
-        secret_key=MINIO_SECRET_KEY,
-        secure=MINIO_SECURE
+        settings.settings.MINIO_ENDPOINT,
+        access_key=settings.MINIO_ACCESS_KEY,
+        secret_key=settings.MINIO_SECRET_KEY,
+        secure=settings.settings.MINIO_SECURE
     )
 
 
@@ -28,10 +25,10 @@ def ensure_bucket_exists():
     """确保 bucket 存在"""
     client = get_minio_client()
     try:
-        if not client.bucket_exists(MINIO_BUCKET):
-            client.make_bucket(MINIO_BUCKET)
+        if not client.bucket_exists(settings.MINIO_BUCKET):
+            client.make_bucket(settings.MINIO_BUCKET)
     except S3Error as e:
-        print(f"Error creating bucket: {e}")
+        logger.error("Error creating bucket: %s", e)
 
 
 def upload_file(file_data: bytes, object_name: str, content_type: str = "application/octet-stream"):
@@ -52,7 +49,7 @@ def upload_file(file_data: bytes, object_name: str, content_type: str = "applica
     try:
         # 上传文件
         client.put_object(
-            bucket_name=MINIO_BUCKET,
+            bucket_name=settings.MINIO_BUCKET,
             object_name=object_name,
             data=BytesIO(file_data),
             length=len(file_data),
@@ -60,7 +57,7 @@ def upload_file(file_data: bytes, object_name: str, content_type: str = "applica
         )
 
         # 生成 URL
-        url = f"http{'s' if MINIO_SECURE else ''}://{MINIO_ENDPOINT}/{MINIO_BUCKET}/{object_name}"
+        url = f"http{'s' if settings.MINIO_SECURE else ''}://{settings.MINIO_ENDPOINT}/{settings.MINIO_BUCKET}/{object_name}"
         return True, url
 
     except S3Error as e:
@@ -80,10 +77,10 @@ def download_file(object_name: str) -> bytes:
     client = get_minio_client()
 
     try:
-        response = client.get_object(MINIO_BUCKET, object_name)
+        response = client.get_object(settings.MINIO_BUCKET, object_name)
         return response.read()
     except S3Error as e:
-        print(f"Error downloading file: {e}")
+        logger.error("Error downloading file: %s", e)
         return b""
     finally:
         response.close()
@@ -103,10 +100,10 @@ def delete_file(object_name: str) -> bool:
     client = get_minio_client()
 
     try:
-        client.remove_object(MINIO_BUCKET, object_name)
+        client.remove_object(settings.MINIO_BUCKET, object_name)
         return True
     except S3Error as e:
-        print(f"Error deleting file: {e}")
+        logger.error("Error deleting file: %s", e)
         return False
 
 
@@ -124,8 +121,8 @@ def get_presigned_url(object_name: str, expires: int = 3600) -> str:
     client = get_minio_client()
 
     try:
-        url = client.presigned_get_object(MINIO_BUCKET, object_name, expires=expires)
+        url = client.presigned_get_object(settings.MINIO_BUCKET, object_name, expires=expires)
         return url
     except S3Error as e:
-        print(f"Error generating presigned URL: {e}")
+        logger.error("Error generating presigned URL: %s", e)
         return ""

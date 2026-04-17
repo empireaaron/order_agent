@@ -84,9 +84,15 @@ def create_app():
     # CORS 中间件
     # 生产环境应通过 CORS_ORIGINS 环境变量限制具体域名
     # 例如: CORS_ORIGINS="https://admin.example.com,https://widget.example.com"
+    cors_origins = settings.CORS_ORIGINS_LIST
+    if "*" in cors_origins:
+        logger.warning(
+            "CORS is configured to allow all origins (*) with credentials enabled. "
+            "This is a security risk in production. Please set CORS_ORIGINS to specific domains."
+        )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS_LIST,
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Request-ID"],

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from db.session import get_db
-from auth.middleware import get_current_active_user
+from auth.middleware import get_current_active_user, ROLE_ADMIN, ROLE_AGENT
 from models import User, Ticket as TicketModel
 from schemas.ticket import TicketCreate, TicketUpdate, TicketMessageCreate, TicketMessage, Ticket as TicketSchema
 from tools.mysql_tools import create_ticket, get_tickets_by_customer, get_ticket_by_id, update_ticket_status, add_ticket_message, get_ticket_messages, get_all_tickets
@@ -75,12 +75,32 @@ def update_ticket(
         raise HTTPException(status_code=404, detail="Ticket not found")
 
     # 只有客服或管理员可以更新工单
-    if current_user.role.code not in ["admin", "agent"]:
+    if current_user.role.code not in [ROLE_ADMIN, ROLE_AGENT]:
         if ticket.customer_id != current_user.id:
             raise HTTPException(status_code=403, detail="Not allowed to update this ticket")
 
-    # 更新字段
+    # 更新字段（根据角色限制可更新字段，禁止反射赋值绕过权限）
     update_data = ticket_update.model_dump(exclude_unset=True)
+
+    if current_user.role.code not in [ROLE_ADMIN, ROLE_AGENT]:
+        # 普通客户只允许更新 title 和 content
+        allowed_fields = {"title", "content"}
+        for key in list(update_data.keys()):
+            if key not in allowed_fields:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Customers are not allowed to update field: {key}"
+                )
+    else:
+        # 客服/管理员不允许通过此接口修改部分系统字段
+        disallowed_fields = {"id", "customer_id", "ticket_no", "created_at", "updated_at", "resolved_at", "closed_at"}
+        for key in list(update_data.keys()):
+            if key in disallowed_fields:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Field cannot be updated: {key}"
+                )
+
     for key, value in update_data.items():
         setattr(ticket, key, value)
 
@@ -153,7 +173,7 @@ def read_all_tickets(
 ):
     """获取所有工单（仅客服/管理员）"""
     # 检查权限
-    if current_user.role.code not in ["admin", "agent"]:
+    if current_user.role.code not in [ROLE_ADMIN, ROLE_AGENT]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
     query = db.query(TicketModel)
@@ -185,7 +205,7 @@ def assign_ticket(
 ):
     """分配工单给当前客服"""
     # 检查权限
-    if current_user.role.code not in ["admin", "agent"]:
+    if current_user.role.code not in [ROLE_ADMIN, ROLE_AGENT]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
     ticket = get_ticket_by_id(db=db, ticket_id=ticket_id)

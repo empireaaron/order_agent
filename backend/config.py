@@ -5,7 +5,7 @@
 import os
 
 from dotenv import load_dotenv
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 加载 .env 文件
@@ -68,7 +68,8 @@ class Settings(BaseSettings):
     LANGCHAIN_PROJECT: str = Field(default="ticket-bot")
 
     # CORS 配置
-    CORS_ORIGINS: str = Field(default="*")  # 生产环境应配置具体域名，如 "https://admin.example.com,https://widget.example.com"
+    # 默认只允许本地开发域名，生产环境应配置具体域名
+    CORS_ORIGINS: str = Field(default="http://localhost:8001")
 
     @property
     def CORS_ORIGINS_LIST(self) -> list:
@@ -109,6 +110,23 @@ class Settings(BaseSettings):
     STM_BUFFER_SIZE: int = Field(default=6)          # 保留最近 N 条消息原文
     STM_SUMMARY_TRIGGER: int = Field(default=10)     # 超过 N 条时触发摘要
     STM_EXPIRE_SECONDS: int = Field(default=1800)    # 记忆过期时间（秒）
+
+    @model_validator(mode='after')
+    def check_security_settings(self):
+        """校验安全相关配置，禁止使用默认弱密钥"""
+        weak_jwt_keys = ["", "your-secret-key-change-in-production-use-env"]
+        if self.JWT_SECRET_KEY in weak_jwt_keys:
+            raise ValueError(
+                "JWT_SECRET_KEY must be configured with a strong secret key. "
+                "Please set JWT_SECRET_KEY in your .env file."
+            )
+        weak_minio_keys = ["", "minioadmin"]
+        if self.MINIO_SECRET_KEY in weak_minio_keys:
+            raise ValueError(
+                "MINIO_SECRET_KEY must be configured with a strong secret key. "
+                "Please set MINIO_SECRET_KEY in your .env file."
+            )
+        return self
 
     @property
     def llm(self):

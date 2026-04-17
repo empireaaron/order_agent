@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Card, Badge, Button, List, Avatar, Input, Tag, Empty, Spin, Modal } from 'antd'
+import { Card, Badge, Button, List, Avatar, Input, Tag, Empty, Spin, Modal, message } from 'antd'
 import { MessageOutlined, UserOutlined, CloseOutlined, TeamOutlined } from '@ant-design/icons'
 import { useAuthStore } from '../../stores/authStore'
 import api from '../../services/api'
@@ -46,6 +46,17 @@ interface WaitingSession {
   wait_time_seconds: number
 }
 
+interface WebSocketMessage {
+  type: 'new_message' | 'new_waiting_session' | 'session_assigned' | 'session_closed'
+  session_id?: string
+  message?: ChatMessage
+  customer?: {
+    id: string
+    username: string
+  }
+  initial_message?: string
+}
+
 const ChatWorkplace: React.FC = () => {
   const { user, token } = useAuthStore()
   const [online, setOnline] = useState(false)
@@ -58,6 +69,9 @@ const ChatWorkplace: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const requestIdRef = useRef<number>(0)
   // 使用 ref 存储 activeSession，避免 WebSocket 回调中的闭包问题
   const activeSessionRef = useRef<ChatSession | null>(null)
 
@@ -71,6 +85,11 @@ const ChatWorkplace: React.FC = () => {
     if (!online) {
       if (wsRef.current) {
         wsRef.current.close()
+        wsRef.current = null
+      }
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
       }
       return
     }
@@ -89,18 +108,18 @@ const ChatWorkplace: React.FC = () => {
       fetchSessions()
       fetchWaitingQueue()
       // 每10秒刷新一次等待队列
-      const interval = setInterval(() => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+      }
+      intervalRef.current = setInterval(() => {
         if (online) {
           fetchWaitingQueue()
-        } else {
-          clearInterval(interval)
         }
       }, 10000)
     }
 
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data)
-      console.log('WebSocket message received:', data)
       handleWebSocketMessage(data)
     }
 
@@ -113,7 +132,16 @@ const ChatWorkplace: React.FC = () => {
     }
 
     return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+        timeoutRef.current = null
+      }
       ws.close()
+      wsRef.current = null
     }
   }, [online, token])
 
@@ -122,22 +150,18 @@ const ChatWorkplace: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const handleWebSocketMessage = (data: any) => {
-    console.log('WebSocket message received:', data)
+  const handleWebSocketMessage = (data: WebSocketMessage) => {
     // 使用 ref 获取最新的 activeSession，避免闭包问题
     const currentActiveSession = activeSessionRef.current
-    console.log('Current active session:', currentActiveSession?.id, 'Message session:', data.session_id)
 
     switch (data.type) {
       case 'new_message':
-        if (data.session_id === currentActiveSession?.id) {
-          console.log('Adding message to current session')
-          setMessages(prev => [...prev, data.message])
-        } else {
-          console.log('Adding unread count to session:', data.session_id)
+        if (data.session_id === currentActiveSession?.id && data.message) {
+          setMessages(prev => [...prev, data.message as ChatMessage])
+        } else if (data.message) {
           setSessions(prev => prev.map(s =>
             s.id === data.session_id
-              ? { ...s, unread_count: s.unread_count + 1, last_message: data.message.content }
+              ? { ...s, unread_count: s.unread_count + 1, last_message: data.message!.content }
               : s
           ))
         }
@@ -166,6 +190,7 @@ const ChatWorkplace: React.FC = () => {
       setSessions(response.data)
     } catch (error) {
       console.error('Failed to fetch sessions:', error)
+      message.error('获取会话列表失败')
     }
   }
 
@@ -176,6 +201,7 @@ const ChatWorkplace: React.FC = () => {
       setWaitingSessions(response.data)
     } catch (error) {
       console.error('Failed to fetch waiting queue:', error)
+      message.error('获取等待队列失败')
     }
   }
 
@@ -185,6 +211,7 @@ const ChatWorkplace: React.FC = () => {
       setOnline(true)
     } catch (error) {
       console.error('Failed to go online:', error)
+      message.error('上线失败')
     }
   }
 
@@ -195,6 +222,7 @@ const ChatWorkplace: React.FC = () => {
       setActiveSession(null)
     } catch (error) {
       console.error('Failed to go offline:', error)
+      message.error('下线失败')
     }
   }
 
@@ -203,7 +231,7 @@ const ChatWorkplace: React.FC = () => {
       await api.post(`/chat-service/sessions/${sessionId}/accept`)
 
       // 等待一下确保 WebSocket 连接正常
-      setTimeout(() => {
+      timeoutRef.current = setTimeout(() => {
         wsRef.current?.send(JSON.stringify({
           type: 'join_session',
           session_id: sessionId,
@@ -228,14 +256,18 @@ const ChatWorkplace: React.FC = () => {
       setWaitingModalVisible(false)
     } catch (error) {
       console.error('Failed to accept session:', error)
+      message.error('接入会话失败')
     }
   }
 
   const loadSessionMessages = async (session: ChatSession) => {
     setActiveSession(session)
     setLoading(true)
+    const currentRequestId = ++requestIdRef.current
     try {
       const response = await api.get(`/chat-service/sessions/${session.id}/messages`)
+      // 忽略过期请求的响应
+      if (currentRequestId !== requestIdRef.current) return
       setMessages(response.data.items || [])
       wsRef.current?.send(JSON.stringify({
         type: 'join_session',
@@ -243,9 +275,14 @@ const ChatWorkplace: React.FC = () => {
         role: 'agent'
       }))
     } catch (error) {
-      console.error('Failed to load messages:', error)
+      if (currentRequestId === requestIdRef.current) {
+        console.error('Failed to load messages:', error)
+        message.error('加载消息失败')
+      }
     } finally {
-      setLoading(false)
+      if (currentRequestId === requestIdRef.current) {
+        setLoading(false)
+      }
     }
   }
 
@@ -284,6 +321,7 @@ const ChatWorkplace: React.FC = () => {
       fetchSessions()
     } catch (error) {
       console.error('Failed to close session:', error)
+      message.error('关闭会话失败')
     }
   }
 

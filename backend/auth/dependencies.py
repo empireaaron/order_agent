@@ -3,14 +3,18 @@
 """
 from fastapi import Depends, HTTPException, status
 
-from db.session import get_db
+from db.session import SessionLocal
 from auth.middleware import get_current_active_user, ROLE_ADMIN, ROLE_AGENT, ROLE_OPERATOR
 from models import User, Ticket, KnowledgeBase, Document
 
 
 def get_db_session():
-    """获取数据库会话"""
-    return next(get_db())
+    """获取数据库会话（FastAPI 依赖注入兼容的生成器）"""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 async def get_current_user_dependency(

@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import { Table, Tag, Button, Space, Card, Input, Modal, Form, Select, message } from 'antd'
+import type { TablePaginationConfig } from 'antd/es/table'
 import { useNavigate } from 'react-router-dom'
 import { SearchOutlined, PlusOutlined } from '@ant-design/icons'
 import api from '../services/api'
+import { getPriorityColor, getStatusColor } from '../utils/formatters'
 
 const { TextArea } = Input
 const { Option } = Select
@@ -18,6 +20,16 @@ interface Ticket {
   created_at: string
 }
 
+interface TicketFormValues {
+  title: string
+  content: string
+  priority: string
+  category: string
+  customer_info?: {
+    contact?: string
+  }
+}
+
 const TicketListPage: React.FC = () => {
   const navigate = useNavigate()
   const [tickets, setTickets] = useState<Ticket[]>([])
@@ -25,31 +37,40 @@ const TicketListPage: React.FC = () => {
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [form] = Form.useForm()
   const [submitting, setSubmitting] = useState(false)
+  const [pagination, setPagination] = useState({
+    current: 1,
+    pageSize: 10,
+    total: 0
+  })
 
-  const fetchTickets = async () => {
+  const fetchTickets = async (page = pagination.current, pageSize = pagination.pageSize) => {
     setLoading(true)
     try {
-      const response = await api.get('/tickets/')
+      const skip = (page - 1) * pageSize
+      const response = await api.get('/tickets/', { params: { skip, limit: pageSize } })
       setTickets(response.data)
+      // 如果后端返回总数，应更新 total；当前后端未返回总数，使用已加载数据长度估算
+      setPagination(prev => ({ ...prev, current: page, pageSize, total: response.data.length < pageSize ? skip + response.data.length : skip + response.data.length + 1 }))
     } catch (error) {
       console.error('Failed to fetch tickets:', error)
+      message.error('获取工单列表失败')
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    fetchTickets()
+    fetchTickets(1, pagination.pageSize)
   }, [])
 
-  const handleCreateTicket = async (values: any) => {
+  const handleCreateTicket = async (values: TicketFormValues) => {
     setSubmitting(true)
     try {
       await api.post('/tickets/', values)
       message.success('工单创建成功')
       setIsModalVisible(false)
       form.resetFields()
-      fetchTickets()
+      fetchTickets(1, pagination.pageSize)
     } catch (error: any) {
       message.error(error.response?.data?.detail || '创建工单失败')
     } finally {
@@ -57,25 +78,8 @@ const TicketListPage: React.FC = () => {
     }
   }
 
-  const getPriorityColor = (priority: string) => {
-    const colors: Record<string, string> = {
-      low: 'green',
-      normal: 'blue',
-      high: 'orange',
-      urgent: 'red',
-    }
-    return colors[priority] || 'default'
-  }
-
-  const getStatusColor = (status: string) => {
-    const colors: Record<string, string> = {
-      open: 'blue',
-      pending: 'orange',
-      in_progress: 'cyan',
-      resolved: 'green',
-      closed: 'default',
-    }
-    return colors[status] || 'default'
+  const handleTableChange = (newPagination: TablePaginationConfig) => {
+    fetchTickets(newPagination.current || 1, newPagination.pageSize || 10)
   }
 
   const columns = [
@@ -161,7 +165,14 @@ const TicketListPage: React.FC = () => {
           dataSource={tickets}
           rowKey="id"
           loading={loading}
-          pagination={{ pageSize: 10 }}
+          pagination={{
+            current: pagination.current,
+            pageSize: pagination.pageSize,
+            total: pagination.total,
+            showSizeChanger: true,
+            showTotal: (total) => `共 ${total} 条`
+          }}
+          onChange={handleTableChange}
         />
       </Card>
 

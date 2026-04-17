@@ -1,12 +1,15 @@
 """
 Milvus 工具函数 - 知识库检索
 """
+import logging
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any
 
 from db.milvus import milvus_manager
+
+logger = logging.getLogger(__name__)
 
 
 def generate_collection_name() -> str:
@@ -50,9 +53,46 @@ def generate_embedding(text: str) -> List[float]:
 
         return response.data[0].embedding
     except Exception as e:
-        print(f"[ERROR] 生成 embedding 失败: {e}")
+        logger.error("生成 embedding 失败: %s", e)
         # 失败时返回零向量（会导致搜索无结果，但不会报错）
         return [0.0] * get_embedding_dimension()
+
+
+def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
+    """
+    批量生成文本向量
+
+    Args:
+        texts: 输入文本列表
+
+    Returns:
+        向量列表
+    """
+    from config import settings
+    from openai import OpenAI
+
+    if not texts:
+        return []
+
+    try:
+        client = OpenAI(
+            api_key=settings.OPENAI_API_KEY,
+            base_url=settings.OPENAI_BASE_URL
+        )
+
+        response = client.embeddings.create(
+            model=settings.EMBEDDING_MODEL,
+            input=texts
+        )
+
+        # 按 index 排序确保顺序一致
+        embeddings = sorted(response.data, key=lambda d: d.index)
+        return [e.embedding for e in embeddings]
+    except Exception as e:
+        logger.error("批量生成 embedding 失败: %s", e)
+        # 失败时全部返回零向量
+        dim = get_embedding_dimension()
+        return [[0.0] * dim for _ in texts]
 
 
 def retrieve_from_knowledge_base(
@@ -75,7 +115,7 @@ def retrieve_from_knowledge_base(
     """
     # 生成真实的 embedding 向量
     query_vector = generate_embedding(question)
-    print(f"[DEBUG] 生成的查询向量维度: {len(query_vector)}")
+    logger.debug("生成的查询向量维度: %s", len(query_vector))
 
     results = milvus_manager.search(
         collection_name=collection_name,
@@ -124,21 +164,11 @@ def insert_document_to_kb(
     Returns:
         是否成功
     """
-    """
-    将文档分块插入知识库
+    # 批量生成 embedding，避免对每个 chunk 单独发起 HTTP 请求
+    vectors = generate_embeddings_batch(chunks)
 
-    Args:
-        collection_name: 集合名称
-        chunks: 文本分块列表
-        metadata_list: 元数据列表
-
-    Returns:
-        是否成功
-    """
     data = []
-    for i, (chunk, metadata) in enumerate(zip(chunks, metadata_list)):
-        # 生成真实的 embedding 向量
-        vector = generate_embedding(chunk)
+    for i, (chunk, metadata, vector) in enumerate(zip(chunks, metadata_list, vectors)):
         data.append({
             "id": f"doc_{i}_{uuid.uuid4().hex[:8]}",
             "vector": vector,
@@ -191,7 +221,7 @@ def search_kb_with_vector(
         similarity = r.get('similarity', 0)
         if content:
             context_parts.append(content)
-            print(f"[DEBUG] [{kb_name}] 相似度: {similarity:.3f}: {content[:80]}...")
+            logger.debug("[%s] 相似度: %.3f: %s...", kb_name, similarity, content[:80])
 
     # 拼接结果，限制总长度
     MAX_CONTEXT_LENGTH = 2000
@@ -240,7 +270,7 @@ def search_kb(
         similarity = r.get('similarity', 0)
         if content:
             context_parts.append(content)
-            print(f"[DEBUG] 知识库结果 [相似度: {similarity:.3f}]: {content[:80]}...")
+            logger.debug("知识库结果 [相似度: %.3f]: %s...", similarity, content[:80])
 
     # 拼接结果，限制总长度（避免超出 LLM 上下文）
     MAX_CONTEXT_LENGTH = 2000  # 最大上下文长度
@@ -284,7 +314,7 @@ def search_kb_batch(
                 r['kb_name'] = kb.name
             return results
         except Exception as e:
-            print(f"[ERROR] 搜索知识库 {kb.name} 失败: {e}")
+            logger.error("搜索知识库 %s 失败: %s", kb.name, e)
             return []
 
     # 并行查询所有知识库

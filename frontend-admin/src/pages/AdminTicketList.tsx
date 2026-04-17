@@ -10,6 +10,7 @@ import {
 } from '@ant-design/icons'
 import api from '../services/api'
 import { useAuthStore } from '../stores/authStore'
+import { getPriorityColor } from '../utils/formatters'
 
 interface Ticket {
   id: string
@@ -73,6 +74,7 @@ const AdminTicketListPage: React.FC = () => {
       setAllTickets(response.data)
     } catch (error) {
       console.error('Failed to fetch all tickets:', error)
+      message.error('获取全部工单失败')
     }
   }
 
@@ -122,6 +124,7 @@ const AdminTicketListPage: React.FC = () => {
       setMessages(response.data)
     } catch (error) {
       console.error('Failed to fetch messages:', error)
+      message.error('获取消息记录失败')
     } finally {
       setMessagesLoading(false)
     }
@@ -141,16 +144,6 @@ const AdminTicketListPage: React.FC = () => {
     } catch (error) {
       message.error('发送回复失败')
     }
-  }
-
-  const getPriorityColor = (priority: string) => {
-    const colors: Record<string, string> = {
-      low: 'green',
-      normal: 'blue',
-      high: 'orange',
-      urgent: 'red'
-    }
-    return colors[priority] || 'default'
   }
 
   const getStatusTag = (status: string) => {

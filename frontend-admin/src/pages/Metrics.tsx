@@ -12,6 +12,10 @@ import {
   Tag,
   Space,
   Typography,
+  Button,
+  Progress,
+  DatePicker,
+  message,
 } from 'antd'
 import {
   LineChartOutlined,
@@ -22,7 +26,6 @@ import {
   AimOutlined,
   CheckCircleOutlined,
 } from '@ant-design/icons'
-import { Button, Progress, DatePicker } from 'antd'
 import {
   LineChart,
   Line,
@@ -163,6 +166,7 @@ const MetricsPage: React.FC = () => {
       setWsData(wsRes.data)
     } catch (error) {
       console.error('获取监控数据失败:', error)
+      message.error('获取监控数据失败')
     } finally {
       setLoading(false)
     }
@@ -191,6 +195,7 @@ const MetricsPage: React.FC = () => {
       setSampleStats(res.data)
     } catch (error) {
       console.error('获取抽样统计失败:', error)
+      message.error('获取抽样统计失败')
     }
   }
 

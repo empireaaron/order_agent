@@ -1,6 +1,7 @@
 """
 文档处理工具 - 提取内容、分块、向量化、存入 Milvus
 """
+import logging
 import os
 import io
 from typing import List, Dict
@@ -12,6 +13,8 @@ from langchain_openai import OpenAIEmbeddings
 from db.milvus import milvus_manager
 from tools.minio_tools import download_file, get_presigned_url
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def extract_text_from_file(file_path: str, file_type: str) -> str:
@@ -197,14 +200,14 @@ def process_document(doc_id: str, file_path: str, file_type: str, collection_nam
     """
     try:
         # 1. 提取文本
-        print(f"[Process] Extracting text from {file_path}")
+        logger.info("Extracting text from %s", file_path)
         text = extract_text_from_file(file_path, file_type)
-        print(f"[Process] Extracted {text} characters")
+        logger.info("Extracted %s characters", len(text) if text else 0)
         if not text or len(text.strip()) == 0:
             return {"success": False, "chunk_count": 0, "error": "No text content extracted"}
 
         # 2. 分块
-        print(f"[Process] Splitting text into chunks")
+        logger.info("Splitting text into chunks")
         chunks = split_text_into_chunks(
             text,
             chunk_size=settings.CHUNK_SIZE,
@@ -214,10 +217,10 @@ def process_document(doc_id: str, file_path: str, file_type: str, collection_nam
         if not chunks:
             return {"success": False, "chunk_count": 0, "error": "No chunks generated"}
 
-        print(f"[Process] Generated {len(chunks)} chunks")
+        logger.info("Generated %s chunks", len(chunks))
 
         # 3. 生成向量
-        print(f"[Process] Generating embeddings")
+        logger.info("Generating embeddings")
         vectors = generate_embeddings(chunks)
 
         # 4. 准备数据
@@ -234,7 +237,7 @@ def process_document(doc_id: str, file_path: str, file_type: str, collection_nam
             })
 
         # 5. 存入 Milvus
-        print(f"[Process] Inserting into Milvus collection: {collection_name}")
+        logger.info("Inserting into Milvus collection: %s", collection_name)
         success = milvus_manager.insert(collection_name=collection_name, data=data)
 
         if success:
@@ -243,5 +246,5 @@ def process_document(doc_id: str, file_path: str, file_type: str, collection_nam
             return {"success": False, "chunk_count": 0, "error": "Failed to insert into Milvus"}
 
     except Exception as e:
-        print(f"[Process] Error processing document: {str(e)}")
+        logger.exception("Error processing document")
         return {"success": False, "chunk_count": 0, "error": str(e)}

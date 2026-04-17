@@ -3,13 +3,13 @@
 提供管理中心所需的各项业务统计数据
 """
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, and_, or_, desc
 from datetime import timedelta
 from typing import Dict, Any, List
 
 from db.session import get_db
-from auth.middleware import get_current_active_user, require_admin_role
+from auth.middleware import get_current_active_user, require_admin_role, ROLE_ADMIN, ROLE_AGENT
 from models import User, Ticket
 from models.chat import ChatSession, AgentStatus
 from utils.timezone import now
@@ -26,7 +26,7 @@ async def get_dashboard_stats(
     获取仪表盘核心统计数据
     """
     # 检查权限（仅管理员和客服可访问）
-    if current_user.role.code not in ["admin", "agent"]:
+    if current_user.role.code not in [ROLE_ADMIN, ROLE_AGENT]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
     now_time = now()
@@ -95,7 +95,7 @@ async def get_ticket_trends(
     """
     获取工单趋势数据（最近N天）
     """
-    if current_user.role.code not in ["admin", "agent"]:
+    if current_user.role.code not in [ROLE_ADMIN, ROLE_AGENT]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
     now_time = now()
@@ -140,7 +140,7 @@ async def get_ticket_categories(
     """
     获取工单分类统计
     """
-    if current_user.role.code not in ["admin", "agent"]:
+    if current_user.role.code not in [ROLE_ADMIN, ROLE_AGENT]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
     # 按分类统计工单数量
@@ -177,7 +177,7 @@ async def get_ticket_priority_stats(
     """
     获取工单优先级统计
     """
-    if current_user.role.code not in ["admin", "agent"]:
+    if current_user.role.code not in [ROLE_ADMIN, ROLE_AGENT]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
     # 按优先级统计工单数量
@@ -222,36 +222,44 @@ async def get_agent_performance(
     now_time = now()
     start_date = now_time - timedelta(days=days)
 
-    # 查询所有客服
-    agents = db.query(User).join(User.role).filter(
+    # 查询所有客服，预加载 agent_status
+    agents = db.query(User).options(
+        joinedload(User.agent_status)
+    ).join(User.role).filter(
         User.role.has(code="agent")
     ).all()
 
+    agent_ids = [agent.id for agent in agents]
+
+    # 聚合查询：各客服处理的工单数
+    handled_stats = db.query(
+        Ticket.assigned_agent_id,
+        func.count(Ticket.id).label("handled")
+    ).filter(
+        Ticket.assigned_agent_id.in_(agent_ids),
+        Ticket.created_at >= start_date
+    ).group_by(Ticket.assigned_agent_id).all()
+    handled_map = {row.assigned_agent_id: row.handled for row in handled_stats}
+
+    # 聚合查询：各客服解决的工单数
+    resolved_stats = db.query(
+        Ticket.assigned_agent_id,
+        func.count(Ticket.id).label("resolved")
+    ).filter(
+        Ticket.assigned_agent_id.in_(agent_ids),
+        Ticket.status == "resolved",
+        Ticket.resolved_at >= start_date
+    ).group_by(Ticket.assigned_agent_id).all()
+    resolved_map = {row.assigned_agent_id: row.resolved for row in resolved_stats}
+
     result = []
     for agent in agents:
-        # 该客服处理的工单数
-        handled_tickets = db.query(Ticket).filter(
-            Ticket.assigned_agent_id == agent.id,
-            Ticket.created_at >= start_date
-        ).count()
-
-        # 该客服解决的工单数
-        resolved_tickets = db.query(Ticket).filter(
-            Ticket.assigned_agent_id == agent.id,
-            Ticket.status == "resolved",
-            Ticket.resolved_at >= start_date
-        ).count()
-
-        # 当前状态
-        agent_status = db.query(AgentStatus).filter(
-            AgentStatus.agent_id == agent.id
-        ).first()
-
+        agent_status = agent.agent_status
         result.append({
             "id": agent.id,
             "name": agent.full_name or agent.username,
-            "handled": handled_tickets,
-            "resolved": resolved_tickets,
+            "handled": handled_map.get(agent.id, 0),
+            "resolved": resolved_map.get(agent.id, 0),
             "status": agent_status.status if agent_status else "offline"
         })
 
@@ -270,11 +278,13 @@ async def get_recent_activities(
     """
     获取最近活动（最近创建的工单）
     """
-    if current_user.role.code not in ["admin", "agent"]:
+    if current_user.role.code not in [ROLE_ADMIN, ROLE_AGENT]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    # 最近创建的工单
-    recent_tickets = db.query(Ticket).order_by(
+    # 最近创建的工单（预加载 customer）
+    recent_tickets = db.query(Ticket).options(
+        joinedload(Ticket.customer)
+    ).order_by(
         desc(Ticket.created_at)
     ).limit(limit).all()
 

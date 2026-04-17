@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { useParams } from 'react-router-dom'
-import { Card, Tag, Descriptions, Timeline, Button, Input, Space } from 'antd'
+import { Card, Tag, Descriptions, Timeline, Button, Input, Space, message as antdMessage } from 'antd'
 import api from '../services/api'
+import { getPriorityColor, getStatusColor } from '../utils/formatters'
 
 interface Ticket {
   id: string
@@ -44,6 +45,7 @@ const TicketDetailPage: React.FC = () => {
       setTicket(response.data)
     } catch (error) {
       console.error('Failed to fetch ticket:', error)
+      antdMessage.error('获取工单详情失败')
     } finally {
       setLoading(false)
     }
@@ -56,6 +58,7 @@ const TicketDetailPage: React.FC = () => {
       setMessages(response.data)
     } catch (error) {
       console.error('Failed to fetch messages:', error)
+      antdMessage.error('获取消息记录失败')
     }
   }
 
@@ -63,27 +66,6 @@ const TicketDetailPage: React.FC = () => {
     fetchTicket()
     fetchMessages()
   }, [id])
-
-  const getPriorityColor = (priority: string) => {
-    const colors: Record<string, string> = {
-      low: 'green',
-      normal: 'blue',
-      high: 'orange',
-      urgent: 'red',
-    }
-    return colors[priority] || 'default'
-  }
-
-  const getStatusColor = (status: string) => {
-    const colors: Record<string, string> = {
-      open: 'blue',
-      pending: 'orange',
-      in_progress: 'cyan',
-      resolved: 'green',
-      closed: 'default',
-    }
-    return colors[status] || 'default'
-  }
 
   const handleSendMessage = async () => {
     if (!message.trim() || !id) return
@@ -97,6 +79,7 @@ const TicketDetailPage: React.FC = () => {
       fetchMessages()  // 刷新消息列表
     } catch (error) {
       console.error('Failed to send message:', error)
+      antdMessage.error('发送回复失败')
     } finally {
       setReplyLoading(false)
     }

@@ -85,6 +85,7 @@ const SamplingAnnotationPage: React.FC = () => {
       setSampleStats(res.data)
     } catch (error) {
       console.error('获取抽样统计失败:', error)
+      message.error('获取抽样统计失败')
     }
   }
 

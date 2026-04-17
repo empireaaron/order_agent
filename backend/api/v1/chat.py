@@ -1,6 +1,7 @@
 """
 聊天 API 路由 - 调用智能体处理用户消息
 """
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -11,6 +12,8 @@ from agents.nodes import ticket_bot_graph
 from agents.state import AgentState
 from memory.short_term import short_term_memory
 from memory.user_profile import user_profile_manager, UserProfileManager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -44,12 +47,12 @@ def chat_with_agent(
     user_profile = user_profile_manager.get_user_profile(current_user.id, db)
     profile_prompt = UserProfileManager.build_profile_prompt(user_profile)
     if profile_prompt:
-        print(f"[DEBUG] 用户画像:\n{profile_prompt}")
+        logger.debug("用户画像:\n%s", profile_prompt)
 
     # 2. 加载短期记忆（对话历史）
     user_id = str(current_user.id)
     history_messages = short_term_memory.get_messages_as_lc(user_id, limit=10)
-    print(f"[DEBUG] 用户 {user_id} 历史对话: {len(history_messages)} 条")
+    logger.debug("用户 %s 历史对话: %s 条", user_id, len(history_messages))
 
     # 3. 构建初始状态，包含历史对话和用户画像
     initial_state: AgentState = {

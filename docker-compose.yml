@@ -15,6 +15,11 @@ services:
       - ./backend/database.sql:/docker-entrypoint-initdb.d/database.sql
     networks:
       - ticket_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   milvus:
     image: milvusdb/milvus:latest
@@ -42,15 +47,23 @@ services:
       - ticket_network
 
   minio:
-    image: minio/minio:RELEASE.2021-02-14T04-01-33Z
+    image: minio/minio:RELEASE.2024-04-18T19-09-19Z
     environment:
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-    command: minio server /minio_data
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /minio_data --console-address ":9001"
     volumes:
       - minio_data:/minio_data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
     networks:
       - ticket_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
@@ -75,17 +88,26 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_ENABLED=true
-      - JWT_SECRET_KEY=your-secret-key-change-in-production
+    env_file:
+      - backend/.env
     ports:
-      - "8000:8000"
+      - "8001:8001"
     volumes:
       - ./backend:/app
     depends_on:
-      - mysql
-      - milvus
-      - redis
+      mysql:
+        condition: service_healthy
+      milvus:
+        condition: service_started
+      redis:
+        condition: service_started
     networks:
       - ticket_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
 
   frontend:
     build: ./frontend-admin

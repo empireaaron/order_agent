@@ -17,6 +17,20 @@ interface User {
   created_at: string
 }
 
+interface UserCreateFormValues {
+  username: string
+  email: string
+  password: string
+  full_name?: string
+  role_id?: number
+}
+
+interface UserEditFormValues {
+  full_name?: string
+  role_id?: number
+  is_active?: boolean
+}
+
 const UsersPage: React.FC = () => {
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(false)
@@ -26,31 +40,39 @@ const UsersPage: React.FC = () => {
   const [form] = Form.useForm()
   const [editForm] = Form.useForm()
   const [submitting, setSubmitting] = useState(false)
+  const [pagination, setPagination] = useState({
+    current: 1,
+    pageSize: 10,
+    total: 0
+  })
 
-  const fetchUsers = async () => {
+  const fetchUsers = async (page = pagination.current, pageSize = pagination.pageSize) => {
     setLoading(true)
     try {
-      const response = await api.get('/users/')
+      const skip = (page - 1) * pageSize
+      const response = await api.get('/users/', { params: { skip, limit: pageSize } })
       setUsers(response.data)
+      setPagination(prev => ({ ...prev, current: page, pageSize, total: response.data.length < pageSize ? skip + response.data.length : skip + response.data.length + 1 }))
     } catch (error) {
       console.error('Failed to fetch users:', error)
+      message.error('获取用户列表失败')
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    fetchUsers()
+    fetchUsers(1, pagination.pageSize)
   }, [])
 
-  const handleAddUser = async (values: any) => {
+  const handleAddUser = async (values: UserCreateFormValues) => {
     setSubmitting(true)
     try {
       await api.post('/auth/register', values)
       message.success('用户创建成功')
       setIsModalOpen(false)
       form.resetFields()
-      fetchUsers()
+      fetchUsers(1, pagination.pageSize)
     } catch (error: any) {
       message.error(error.response?.data?.detail || '创建用户失败')
     } finally {
@@ -58,7 +80,7 @@ const UsersPage: React.FC = () => {
     }
   }
 
-  const handleEditUser = async (values: any) => {
+  const handleEditUser = async (values: UserEditFormValues) => {
     if (!editingUser) return
     setSubmitting(true)
     try {
@@ -67,7 +89,7 @@ const UsersPage: React.FC = () => {
       setIsEditModalOpen(false)
       setEditingUser(null)
       editForm.resetFields()
-      fetchUsers()
+      fetchUsers(pagination.current, pagination.pageSize)
     } catch (error: any) {
       message.error(error.response?.data?.detail || '更新用户失败')
     } finally {
@@ -96,7 +118,7 @@ const UsersPage: React.FC = () => {
         try {
           await api.delete(`/users/${user.id}`)
           message.success('用户删除成功')
-          fetchUsers()
+          fetchUsers(pagination.current, pagination.pageSize)
         } catch (error: any) {
           message.error(error.response?.data?.detail || '删除用户失败')
         }
@@ -304,6 +326,14 @@ const UsersPage: React.FC = () => {
           dataSource={users}
           rowKey="id"
           loading={loading}
+          pagination={{
+            current: pagination.current,
+            pageSize: pagination.pageSize,
+            total: pagination.total,
+            showSizeChanger: true,
+            showTotal: (total) => `共 ${total} 条`
+          }}
+          onChange={(newPagination) => fetchUsers(newPagination.current, newPagination.pageSize)}
         />
       </Card>
     </div>

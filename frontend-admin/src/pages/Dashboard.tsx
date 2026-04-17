@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Row, Col, Card, Statistic, List, Tag, Badge, Skeleton } from 'antd'
+import { Row, Col, Card, Statistic, List, Tag, Badge, Skeleton, message } from 'antd'
 import {
   MessageOutlined,
   CheckCircleOutlined,
@@ -132,6 +132,7 @@ const DashboardPage: React.FC = () => {
       setActivities(activitiesRes.data)
     } catch (error) {
       console.error('获取仪表盘数据失败:', error)
+      message.error('获取仪表盘数据失败')
     } finally {
       setLoading(false)
     }

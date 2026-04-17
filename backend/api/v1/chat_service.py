@@ -1,19 +1,24 @@
 """
 实时客服聊天 API
 """
+import logging
+import traceback
+
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
-from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import or_, and_, func
 from typing import List, Optional
 from datetime import timedelta
 import asyncio
 
 from db.session import get_db
-from auth.middleware import get_current_active_user
+from auth.middleware import get_current_active_user, ROLE_ADMIN, ROLE_AGENT
 from models import User
 from models.chat import ChatSession, ChatMessage, AgentStatus
 from websocket.chat import chat_ws_manager
 from utils.timezone import now
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat-service", tags=["Chat Service"])
 
@@ -123,8 +128,8 @@ def create_chat_session(
     客户发起转人工，创建聊天会话
     """
     try:
-        print(f"DEBUG: Creating chat session for user {current_user.id}")
-        print(f"DEBUG: Request body: {request}")
+        logger.debug("Creating chat session for user %s", current_user.id)
+        logger.debug("Request body: %s", request)
 
         # 检查是否已有进行中的会话
         existing = db.query(ChatSession).filter(
@@ -132,10 +137,10 @@ def create_chat_session(
             ChatSession.status.in_(["waiting", "connected"])
         ).first()
 
-        print(f"DEBUG: Existing session check: {existing}")
+        logger.debug("Existing session check: %s", existing)
 
         if existing:
-            print(f"DEBUG: Found existing session {existing.id}, status={existing.status}")
+            logger.debug("Found existing session %s, status=%s", existing.id, existing.status)
 
             # 如果已有 connected 状态的会话，直接返回
             if existing.status == "connected":
@@ -151,7 +156,7 @@ def create_chat_session(
                 }
             # 如果已有 waiting 状态的会话，返回排队位置
             queue_pos = get_queue_position(db, existing.id)
-            print(f"DEBUG: Existing session queue position: {queue_pos}")
+            logger.debug("Existing session queue position: %s", queue_pos)
             return {
                 "session_id": existing.id,
                 "status": existing.status,
@@ -160,7 +165,7 @@ def create_chat_session(
             }
 
         # 创建新会话
-        print(f"DEBUG: Creating new chat session")
+        logger.debug("Creating new chat session")
         session = ChatSession(
             customer_id=current_user.id,
             status="waiting",
@@ -170,12 +175,12 @@ def create_chat_session(
         db.add(session)
         db.commit()
         db.refresh(session)
-        print(f"DEBUG: Session created: {session.id}")
+        logger.debug("Session created: %s", session.id)
 
         # 尝试自动分配客服
-        print(f"DEBUG: Trying to auto-assign agent")
+        logger.debug("Trying to auto-assign agent")
         assigned_agent = auto_assign_agent(db)
-        print(f"DEBUG: Auto-assign result: {assigned_agent}")
+        logger.debug("Auto-assign result: %s", assigned_agent)
         if assigned_agent:
             session.agent_id = assigned_agent.agent_id
             session.status = "connected"
@@ -252,9 +257,8 @@ def create_chat_session(
         }
     except Exception as e:
         import traceback
-        print(f"Error creating chat session: {str(e)}")
-        print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"创建会话失败: {str(e)}")
+        logger.exception("Error creating chat session")
+        raise HTTPException(status_code=500, detail="创建会话失败，请稍后重试")
 
 
 @router.get("/sessions/waiting")
@@ -265,7 +269,7 @@ def get_waiting_sessions(
     """
     客服获取等待队列（仅客服/管理员）
     """
-    if current_user.role.code not in ["admin", "agent"]:
+    if current_user.role.code not in [ROLE_ADMIN, ROLE_AGENT]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
     sessions = db.query(ChatSession).filter(
@@ -296,7 +300,7 @@ def accept_chat_session(
     """
     客服接入会话
     """
-    if current_user.role.code not in ["admin", "agent"]:
+    if current_user.role.code not in [ROLE_ADMIN, ROLE_AGENT]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
     session = db.query(ChatSession).filter(
@@ -312,7 +316,7 @@ def accept_chat_session(
         AgentStatus.agent_id == current_user.id
     ).first()
 
-    if agent_status and int(agent_status.current_sessions) >= int(agent_status.max_sessions):
+    if agent_status and agent_status.current_sessions >= agent_status.max_sessions:
         raise HTTPException(status_code=400, detail="您已达到最大并发会话数")
 
     # 分配会话
@@ -323,8 +327,8 @@ def accept_chat_session(
 
     # 更新客服状态
     if agent_status:
-        agent_status.current_sessions = str(int(agent_status.current_sessions) + 1)
-        agent_status.total_sessions_today = str(int(agent_status.total_sessions_today) + 1)
+        agent_status.current_sessions = agent_status.current_sessions + 1
+        agent_status.total_sessions_today = agent_status.total_sessions_today + 1
         db.commit()
 
     # 发送系统消息
@@ -389,7 +393,11 @@ def get_my_chat_sessions(
     else:
         query = query.filter(ChatSession.status.in_(["waiting", "connected"]))
 
-    sessions = query.order_by(ChatSession.last_message_at.desc()).all()
+    sessions = query.options(
+        joinedload(ChatSession.customer),
+        joinedload(ChatSession.agent),
+        joinedload(ChatSession.messages)
+    ).order_by(ChatSession.last_message_at.desc()).all()
 
     return [{
         "id": s.id,
@@ -535,9 +543,9 @@ def get_chat_messages(
             ChatMessage.session_id == session_id
         ).order_by(ChatMessage.created_at.asc()).offset(offset).limit(page_size).all()
 
-    print(f"DEBUG: get_chat_messages: session_id={session_id}, page={page}, total={total}, returned={len(messages)}, include_ai={include_ai_history}")
+    logger.debug("get_chat_messages: session_id=%s, page=%s, total=%s, returned=%s, include_ai=%s", session_id, page, total, len(messages), include_ai_history)
     for m in messages[:3]:
-        print(f"DEBUG:   msg: sender_type={m.sender_type}, session={m.session_id}, sender={m.sender_id}, content={m.content[:30]}...")
+        logger.debug("  msg: sender_type=%s, session=%s, sender=%s, content=%s...", m.sender_type, m.session_id, m.sender_id, m.content[:30])
 
     return {
         "items": [{
@@ -585,7 +593,7 @@ def close_chat_session(
             AgentStatus.agent_id == session.agent_id
         ).first()
         if agent_status:
-            agent_status.current_sessions = str(max(0, int(agent_status.current_sessions) - 1))
+            agent_status.current_sessions = max(0, agent_status.current_sessions - 1)
             db.commit()
 
     # WebSocket 通知双方会话已关闭
@@ -606,10 +614,10 @@ def set_agent_online(
     current_user: User = Depends(get_current_active_user)
 ):
     """客服上线"""
-    print(f"DEBUG: set_agent_online called, user_id={current_user.id}, role={current_user.role.code}")
+    logger.debug("set_agent_online called, user_id=%s, role=%s", current_user.id, current_user.role.code)
 
     if current_user.role.code not in ["admin", "agent"]:
-        print(f"DEBUG: Permission denied for role {current_user.role.code}")
+        logger.debug("Permission denied for role %s", current_user.role.code)
         raise HTTPException(status_code=403, detail="Permission denied")
 
     agent_status = db.query(AgentStatus).filter(
@@ -617,19 +625,19 @@ def set_agent_online(
     ).first()
 
     if not agent_status:
-        print(f"DEBUG: Creating new agent status for {current_user.id}")
+        logger.debug("Creating new agent status for %s", current_user.id)
         agent_status = AgentStatus(
             agent_id=current_user.id,
             status="online",
-            max_sessions="5"
+            max_sessions=5
         )
         db.add(agent_status)
     else:
-        print(f"DEBUG: Updating agent status to online for {current_user.id}")
+        logger.debug("Updating agent status to online for %s", current_user.id)
         agent_status.status = "online"
 
     db.commit()
-    print(f"DEBUG: Agent {current_user.id} is now online")
+    logger.debug("Agent %s is now online", current_user.id)
     return {"status": "online"}
 
 
@@ -639,7 +647,7 @@ def set_agent_offline(
     current_user: User = Depends(get_current_active_user)
 ):
     """客服下线"""
-    if current_user.role.code not in ["admin", "agent"]:
+    if current_user.role.code not in [ROLE_ADMIN, ROLE_AGENT]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
     agent_status = db.query(AgentStatus).filter(
@@ -656,25 +664,21 @@ def set_agent_offline(
 # ============ 辅助函数 ============
 
 def get_queue_position(db: Session, session_id: str) -> int:
-    """获取排队位置"""
-    waiting = db.query(ChatSession).filter(
-        ChatSession.status == "waiting"
-    ).order_by(ChatSession.created_at).all()
+    """获取排队位置（使用数据库 COUNT 查询，避免加载全部 waiting 会话）"""
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    if not session:
+        # 会话不存在时返回估算位置
+        total_waiting = db.query(func.count(ChatSession.id)).filter(
+            ChatSession.status == "waiting"
+        ).scalar()
+        return (total_waiting or 0) + 1
 
-    print(f"DEBUG: get_queue_position called for session {session_id}")
-    print(f"DEBUG: Found {len(waiting)} waiting sessions")
+    position = db.query(func.count(ChatSession.id)).filter(
+        ChatSession.status == "waiting",
+        ChatSession.created_at < session.created_at
+    ).scalar()
 
-    for i, s in enumerate(waiting, 1):
-        sid = str(s.id)
-        target_sid = str(session_id)
-        print(f"DEBUG: Checking position {i}, session {sid} vs target {target_sid}")
-        if sid == target_sid:
-            print(f"DEBUG: Found match at position {i}")
-            return i
-
-    print(f"DEBUG: Session {session_id} not found in waiting list ({len(waiting)} waiting)")
-    # 如果会话不在等待列表中，返回最后位置+1
-    return len(waiting) + 1
+    return (position or 0) + 1
 
 
 def auto_assign_agent(db: Session) -> Optional[AgentStatus]:
@@ -685,16 +689,13 @@ def auto_assign_agent(db: Session) -> Optional[AgentStatus]:
     ).order_by(AgentStatus.current_sessions).all()
 
     for agent in agents:
-        try:
-            current = int(agent.current_sessions or 0)
-            max_sess = int(agent.max_sessions or 5)
-            if current < max_sess:
-                print(f"DEBUG: Found available agent {agent.agent_id} with {current}/{max_sess} sessions")
-                return agent
-        except (ValueError, TypeError):
-            continue
+        current = agent.current_sessions or 0
+        max_sess = agent.max_sessions or 5
+        if current < max_sess:
+            logger.debug("Found available agent %s with %s/%s sessions", agent.agent_id, current, max_sess)
+            return agent
 
-    print(f"DEBUG: No available agent found among {len(agents)} online agents")
+    logger.debug("No available agent found among %s online agents", len(agents))
     return None
 
 
@@ -715,7 +716,7 @@ def save_ai_message(
         role = request.get("role")  # 'customer' 或 'ai'
         content = request.get("content")
 
-        print(f"DEBUG: save_ai_message called: role={role}, content={content[:50]}...")
+        logger.debug("save_ai_message called: role=%s, content=%s...", role, content[:50])
 
         if not role or not content:
             raise HTTPException(status_code=400, detail="Missing role or content")
@@ -734,7 +735,7 @@ def save_ai_message(
         db.commit()
         db.refresh(msg)
 
-        print(f"DEBUG: Saved AI message: id={msg.id}, role={role}, sender={msg.sender_id}, customer={msg.customer_id}")
+        logger.debug("Saved AI message: id=%s, role=%s, sender=%s, customer=%s", msg.id, role, msg.sender_id, msg.customer_id)
 
         return {
             "id": msg.id,
@@ -742,11 +743,9 @@ def save_ai_message(
             "content": content,
             "created_at": msg.created_at.isoformat()
         }
-    except Exception as e:
-        import traceback
-        print(f"Error saving AI message: {e}")
-        print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"保存消息失败: {str(e)}")
+    except Exception:
+        logger.exception("Error saving AI message")
+        raise HTTPException(status_code=500, detail="保存消息失败，请稍后重试")
 
 
 @router.get("/ai-messages")
@@ -761,7 +760,7 @@ def get_ai_messages(
     优化：使用 customer_id 字段直接查询
     """
     try:
-        print(f"DEBUG: get_ai_messages for user {current_user.id}, page={page}, page_size={page_size}")
+        logger.debug("get_ai_messages for user %s, page=%s, page_size=%s", current_user.id, page, page_size)
 
         # 查询优化：使用 customer_id 字段直接查询
         # 筛选条件：customer_id = 当前用户ID 且 session_id IS NULL（AI聊天阶段）
@@ -779,7 +778,7 @@ def get_ai_messages(
             ChatMessage.sender_type.in_(["customer", "ai"])
         ).order_by(ChatMessage.created_at.asc()).offset(offset).limit(page_size).all()
 
-        print(f"DEBUG: Found {len(messages)} AI messages (total={total})")
+        logger.debug("Found %s AI messages (total=%s)", len(messages), total)
 
         return {
             "items": [{
@@ -794,6 +793,6 @@ def get_ai_messages(
             "page_size": page_size,
             "has_more": offset + len(messages) < total
         }
-    except Exception as e:
-        print(f"Error getting AI messages: {e}")
-        raise HTTPException(status_code=500, detail=f"获取消息失败: {str(e)}")
+    except Exception:
+        logger.exception("Error getting AI messages")
+        raise HTTPException(status_code=500, detail="获取消息失败，请稍后重试")

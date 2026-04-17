@@ -18,11 +18,11 @@ import MetricsPage from './pages/Metrics'
 import SamplingAnnotationPage from './pages/SamplingAnnotation'
 
 function App() {
-  const { isAuthenticated, checkAuth } = useAuthStore()
+  const { isAuthenticated } = useAuthStore()
 
   useEffect(() => {
-    checkAuth()
-  }, [checkAuth])
+    useAuthStore.getState().checkAuth()
+  }, [])
 
   return (
     <ConfigProvider

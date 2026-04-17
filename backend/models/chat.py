@@ -1,7 +1,7 @@
 """
 实时聊天会话模型
 """
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Index
+from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Text, Index
 from sqlalchemy.orm import relationship
 from db.session import Base
 from utils.timezone import now
@@ -93,12 +93,12 @@ class AgentStatus(Base):
     status = Column(String(20), default="offline", comment="在线状态")
 
     # 当前会话数
-    current_sessions = Column(String(10), default="0", comment="当前会话数")
-    max_sessions = Column(String(10), default="5", comment="最大并发会话数")
+    current_sessions = Column(Integer, default=0, comment="当前会话数")
+    max_sessions = Column(Integer, default=5, comment="最大并发会话数")
 
     # 今日统计
-    total_sessions_today = Column(String(10), default="0")
-    total_messages_today = Column(String(10), default="0")
+    total_sessions_today = Column(Integer, default=0)
+    total_messages_today = Column(Integer, default=0)
 
     last_heartbeat = Column(DateTime(timezone=True), default=now, comment="最后心跳时间")
     updated_at = Column(DateTime(timezone=True), default=now, onupdate=now)

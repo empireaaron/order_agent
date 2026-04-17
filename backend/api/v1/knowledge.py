@@ -1,6 +1,10 @@
 """
 知识库 API 路由
 """
+import logging
+import os
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 
@@ -12,6 +16,8 @@ from tools.mysql_tools import create_knowledge_base, get_knowledge_bases_by_owne
 from tools.milvus_tools import create_knowledge_base_collection
 from tools.minio_tools import upload_file
 from tools.document_processor import process_document
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/knowledge", tags=["Knowledge Base"])
 
@@ -40,11 +46,13 @@ def create_knowledge_base_endpoint(
 
 @router.get("/", response_model=list[KnowledgeBaseSchema])
 def read_knowledge_bases(
+    skip: int = 0,
+    limit: int = 10,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """获取用户的所有知识库"""
-    kbs = get_knowledge_bases_by_owner(db=db, owner_id=current_user.id)
+    kbs = get_knowledge_bases_by_owner(db=db, owner_id=current_user.id, skip=skip, limit=limit)
     return kbs
 
 
@@ -105,16 +113,24 @@ def upload_document(
     if kb.owner_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not allowed to add documents to this knowledge base")
 
+    # 安全过滤文件名：去除路径遍历风险
+    safe_filename = os.path.basename(file.filename or "")
+    safe_filename = re.sub(r'[\\/]', '', safe_filename)
+    safe_filename = re.sub(r'\.{2,}', '', safe_filename)
+    safe_filename = safe_filename.strip()
+    if not safe_filename:
+        raise HTTPException(status_code=400, detail="Invalid file name")
+
     # 限制文件类型
     allowed_types = [".txt", ".pdf", ".docx", ".doc", ".md", ".html"]
-    file_ext = "." + file.filename.split(".")[-1].lower()
+    file_ext = "." + safe_filename.split(".")[-1].lower()
     if file_ext not in allowed_types:
         raise HTTPException(status_code=400, detail=f"File type not allowed. Allowed types: {allowed_types}")
 
     # 读取文件内容并上传到 MinIO
     try:
         content = file.file.read()
-        object_name = f"{kb_id}/{file.filename}"
+        object_name = f"{kb_id}/{safe_filename}"
 
         # 上传到 MinIO
         success, result = upload_file(
@@ -130,8 +146,8 @@ def upload_document(
         db_doc = create_document(
             db=db,
             knowledge_base_id=kb_id,
-            title=file.filename,
-            original_filename=file.filename,
+            title=safe_filename,
+            original_filename=safe_filename,
             file_type=file_ext,
             file_size=len(content)
         )
@@ -196,7 +212,7 @@ def upload_document(
     # 返回上传信息
     return {
         "id": db_doc.id,
-        "filename": file.filename,
+        "filename": safe_filename,
         "status": "processing",
         "message": "File uploaded and processing in background"
     }
@@ -242,7 +258,7 @@ def delete_document(
         from tools.minio_tools import delete_file
         delete_file(doc.file_path)
     except Exception as e:
-        print(f"Warning: Failed to delete file from MinIO: {e}")
+        logger.warning("Failed to delete file from MinIO: %s", e)
 
     # 2. 从 Milvus 删除该文档的所有向量数据
     try:
@@ -252,7 +268,7 @@ def delete_document(
             expr=f"id like '{doc.id}_%'"
         )
     except Exception as e:
-        print(f"Warning: Failed to delete vectors from Milvus: {e}")
+        logger.warning("Failed to delete vectors from Milvus: %s", e)
 
     # 3. 删除数据库记录
     db.delete(doc)
@@ -287,7 +303,7 @@ def delete_knowledge_base(
         from db.milvus import milvus_manager
         milvus_manager.drop_collection(kb.collection_name)
     except Exception as e:
-        print(f"Warning: Failed to drop Milvus collection: {e}")
+        logger.warning("Failed to drop Milvus collection: %s", e)
 
     # 删除相关文档记录
     db.query(Document).filter(Document.knowledge_base_id == kb_id).delete()

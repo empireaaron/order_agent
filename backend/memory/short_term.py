@@ -10,6 +10,7 @@
 - 对早期消息自动生成摘要
 - 适合长对话场景
 """
+import logging
 import threading
 import time
 from collections import defaultdict
@@ -18,6 +19,8 @@ from datetime import datetime, timedelta
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class ShortTermMemory:
@@ -65,18 +68,18 @@ class ShortTermMemory:
                 if redis_store.is_available():
                     self._redis_storage = redis_store
                     self._backend = "redis"
-                    print("[INFO] 使用 Redis 存储后端")
+                    logger.info("使用 Redis 存储后端")
                 else:
                     self._init_memory_backend()
             except Exception as e:
-                print(f"[WARNING] Redis 初始化失败，回退到内存: {e}")
+                logger.warning("Redis 初始化失败，回退到内存: %s", e)
                 self._init_memory_backend()
         elif backend == "redis":
             from memory.redis_store import redis_store
             if redis_store.is_available():
                 self._redis_storage = redis_store
                 self._backend = "redis"
-                print("[INFO] 使用 Redis 存储后端（强制）")
+                logger.info("使用 Redis 存储后端（强制）")
             else:
                 raise RuntimeError("Redis 不可用，但强制指定了 redis 后端")
         else:
@@ -88,7 +91,7 @@ class ShortTermMemory:
             lambda: {"messages": [], "summary": "", "last_summary_time": 0}
         )
         self._backend = "memory"
-        print("[INFO] 使用内存存储后端")
+        logger.info("使用内存存储后端")
 
     def _is_redis(self) -> bool:
         """是否使用 Redis 后端"""
@@ -158,10 +161,10 @@ class ShortTermMemory:
                 {"role": "system", "content": f"[历史对话摘要] {summary}", "timestamp": time.time(), "is_summary": True}
             ] + recent_messages
 
-            print(f"[DEBUG] 为用户 {user_id} 生成对话摘要，保留最近 {len(recent_messages)} 条原文")
+            logger.debug("为用户 %s 生成对话摘要，保留最近 %s 条原文", user_id, len(recent_messages))
 
         except Exception as e:
-            print(f"[ERROR] 生成摘要失败: {e}")
+            logger.error("生成摘要失败: %s", e)
             user_data["messages"] = messages[-self.max_messages:]
 
     def _generate_redis_summary(self, user_id: str, messages: List[Dict]):
@@ -181,10 +184,10 @@ class ShortTermMemory:
 
             # 保存摘要到 Redis
             self._redis_storage.save_summary(user_id, summary, self.expire_seconds)
-            print(f"[DEBUG] 为用户 {user_id} 生成 Redis 摘要")
+            logger.debug("为用户 %s 生成 Redis 摘要", user_id)
 
         except Exception as e:
-            print(f"[ERROR] Redis 生成摘要失败: {e}")
+            logger.error("Redis 生成摘要失败: %s", e)
 
     def _create_summary(self, messages: List[Dict], existing_summary: str) -> str:
         """创建对话摘要"""
@@ -303,7 +306,7 @@ class ShortTermMemory:
                 user_data["messages"] = []
                 user_data["summary"] = ""
                 user_data["last_summary_time"] = 0
-                print(f"[DEBUG] 用户 {user_id} 的对话已过期，清空记忆")
+                logger.debug("用户 %s 的对话已过期，清空记忆", user_id)
 
     def get_conversation_summary(self, user_id: str) -> str:
         """获取对话摘要（用于调试）"""

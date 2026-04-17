@@ -165,11 +165,15 @@ def create_knowledge_base(
 
 def get_knowledge_bases_by_owner(
     db: Session,
-    owner_id: str
+    owner_id: str,
+    skip: int = 0,
+    limit: int = 100
 ) -> List[KnowledgeBase]:
     """获取所有者的所有知识库"""
     return db.query(KnowledgeBase)\
         .filter(KnowledgeBase.owner_id == owner_id)\
+        .offset(skip)\
+        .limit(limit)\
         .all()
 
 

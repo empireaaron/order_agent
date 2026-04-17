@@ -14,36 +14,50 @@ interface KnowledgeBase {
   created_at: string
 }
 
+interface KnowledgeFormValues {
+  name: string
+  description?: string
+  status: string
+}
+
 const KnowledgeBasePage: React.FC = () => {
   const navigate = useNavigate()
   const [kbs, setKbs] = useState<KnowledgeBase[]>([])
   const [loading, setLoading] = useState(false)
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [form] = Form.useForm()
+  const [pagination, setPagination] = useState({
+    current: 1,
+    pageSize: 10,
+    total: 0
+  })
 
-  const fetchKbs = async () => {
+  const fetchKbs = async (page = pagination.current, pageSize = pagination.pageSize) => {
     setLoading(true)
     try {
-      const response = await api.get('/knowledge/')
+      const skip = (page - 1) * pageSize
+      const response = await api.get('/knowledge/', { params: { skip, limit: pageSize } })
       setKbs(response.data)
+      setPagination(prev => ({ ...prev, current: page, pageSize, total: response.data.length < pageSize ? skip + response.data.length : skip + response.data.length + 1 }))
     } catch (error) {
       console.error('Failed to fetch knowledge bases:', error)
+      message.error('获取知识库列表失败')
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    fetchKbs()
+    fetchKbs(1, pagination.pageSize)
   }, [])
 
-  const handleCreate = async (values: any) => {
+  const handleCreate = async (values: KnowledgeFormValues) => {
     try {
       await api.post('/knowledge/', values)
       message.success('知识库创建成功')
       setIsModalVisible(false)
       form.resetFields()
-      fetchKbs()
+      fetchKbs(1, pagination.pageSize)
     } catch (error) {
       message.error('创建失败')
     }
@@ -60,7 +74,7 @@ const KnowledgeBasePage: React.FC = () => {
         try {
           await api.delete(`/knowledge/${record.id}`)
           message.success('知识库删除成功')
-          fetchKbs()
+          fetchKbs(pagination.current, pagination.pageSize)
         } catch (error) {
           message.error('删除失败')
         }
@@ -126,7 +140,7 @@ const KnowledgeBasePage: React.FC = () => {
                 })
                 message.success(`${(file as File).name} 上传成功`)
                 onSuccess?.('ok')
-                fetchKbs()
+                fetchKbs(pagination.current, pagination.pageSize)
               } catch (error) {
                 message.error(`${(file as File).name} 上传失败`)
                 onError?.(error as Error)
@@ -162,6 +176,14 @@ const KnowledgeBasePage: React.FC = () => {
           dataSource={kbs}
           rowKey="id"
           loading={loading}
+          pagination={{
+            current: pagination.current,
+            pageSize: pagination.pageSize,
+            total: pagination.total,
+            showSizeChanger: true,
+            showTotal: (total) => `共 ${total} 条`
+          }}
+          onChange={(newPagination) => fetchKbs(newPagination.current, newPagination.pageSize)}
         />
       </Card>
 

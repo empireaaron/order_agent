@@ -2,9 +2,12 @@
 Redis 存储后端 - 支持分布式部署
 """
 import json
+import logging
 import time
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 
@@ -13,7 +16,7 @@ try:
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
-    print("[WARNING] redis 包未安装，Redis 存储不可用。请运行: pip install redis")
+    logger.warning("redis 包未安装，Redis 存储不可用。请运行: pip install redis")
 
 
 class RedisMemoryStore:
@@ -47,9 +50,9 @@ class RedisMemoryStore:
             )
             # 测试连接
             self.client.ping()
-            print(f"[INFO] Redis 连接成功: {settings.REDIS_HOST}:{settings.REDIS_PORT}")
+            logger.info("Redis 连接成功: %s:%s", settings.REDIS_HOST, settings.REDIS_PORT)
         except Exception as e:
-            print(f"[ERROR] Redis 连接失败: {e}")
+            logger.error("Redis 连接失败: %s", e)
             self.client = None
 
     def is_available(self) -> bool:
@@ -84,7 +87,7 @@ class RedisMemoryStore:
             self.client.expire(key, expire_seconds)
             return True
         except Exception as e:
-            print(f"[ERROR] Redis add_message 失败: {e}")
+            logger.error("Redis add_message 失败: %s", e)
             return False
 
     def get_messages(self, user_id: str, limit: int = 10) -> List[Dict[str, Any]]:
@@ -105,7 +108,7 @@ class RedisMemoryStore:
                     continue
             return messages
         except Exception as e:
-            print(f"[ERROR] Redis get_messages 失败: {e}")
+            logger.error("Redis get_messages 失败: %s", e)
             return []
 
     def clear_memory(self, user_id: str):
@@ -119,7 +122,7 @@ class RedisMemoryStore:
             self.client.delete(key_messages, key_summary)
             return True
         except Exception as e:
-            print(f"[ERROR] Redis clear_memory 失败: {e}")
+            logger.error("Redis clear_memory 失败: %s", e)
             return False
 
     def clear_all_memory(self):
@@ -134,7 +137,7 @@ class RedisMemoryStore:
                 self.client.delete(*keys)
             return True
         except Exception as e:
-            print(f"[ERROR] Redis clear_all_memory 失败: {e}")
+            logger.error("Redis clear_all_memory 失败: %s", e)
             return False
 
     def save_summary(self, user_id: str, summary: str, expire_seconds: int = 1800):
@@ -147,7 +150,7 @@ class RedisMemoryStore:
             self.client.set(key, summary, ex=expire_seconds)
             return True
         except Exception as e:
-            print(f"[ERROR] Redis save_summary 失败: {e}")
+            logger.error("Redis save_summary 失败: %s", e)
             return False
 
     def get_summary(self, user_id: str) -> str:
@@ -160,7 +163,7 @@ class RedisMemoryStore:
             summary = self.client.get(key)
             return summary or ""
         except Exception as e:
-            print(f"[ERROR] Redis get_summary 失败: {e}")
+            logger.error("Redis get_summary 失败: %s", e)
             return ""
 
     def get_all_keys(self, pattern: str = "chat_memory:*") -> List[str]:
@@ -171,7 +174,7 @@ class RedisMemoryStore:
         try:
             return list(self.client.scan_iter(match=pattern))
         except Exception as e:
-            print(f"[ERROR] Redis get_all_keys 失败: {e}")
+            logger.error("Redis get_all_keys 失败: %s", e)
             return []
 
 
