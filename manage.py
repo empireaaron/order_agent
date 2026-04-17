@@ -25,7 +25,7 @@ def run_backend():
 def run_frontend():
     """启动前端开发服务器"""
     os.chdir(os.path.join(os.path.dirname(__file__), 'frontend-admin'))
-    subprocess.run(['npm', 'run', 'dev'])
+    subprocess.run(['npm', 'run', 'dev'], shell=True)
 
 def init_db():
     """初始化数据库"""
@@ -63,7 +63,7 @@ def run_lint():
     # 前端：eslint
     if os.path.exists(frontend_dir):
         try:
-            if subprocess.run(['npm', 'run', 'lint'], cwd=frontend_dir).returncode != 0:
+            if subprocess.run(['npm', 'run', 'lint'], cwd=frontend_dir, shell=True).returncode != 0:
                 has_error = True
         except FileNotFoundError:
             print("npm 未找到，跳过前端代码检查")
