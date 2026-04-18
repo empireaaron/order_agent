@@ -91,11 +91,35 @@ class ShortTermMemory:
             lambda: {"messages": [], "summary": "", "last_summary_time": 0}
         )
         self._backend = "memory"
+        self._memory_ops = 0
         logger.info("使用内存存储后端")
 
     def _is_redis(self) -> bool:
         """是否使用 Redis 后端"""
         return self._backend == "redis" and self._redis_storage is not None
+
+    def _cleanup_memory_storage(self):
+        """清理内存后端中的空 key 和限制总用户数"""
+        # 删除空消息的用户 key
+        empty_keys = [
+            uid for uid, data in self._memory_storage.items()
+            if not data.get("messages")
+        ]
+        for uid in empty_keys:
+            del self._memory_storage[uid]
+
+        # 限制内存中保留的用户数（最多 1000 个活跃用户）
+        if len(self._memory_storage) > 1000:
+            # 按最后消息时间排序，保留最近的 800 个用户
+            sorted_users = sorted(
+                self._memory_storage.items(),
+                key=lambda x: x[1]["messages"][-1]["timestamp"] if x[1].get("messages") else 0,
+                reverse=True
+            )[:800]
+            self._memory_storage.clear()
+            for uid, data in sorted_users:
+                self._memory_storage[uid] = data
+            logger.debug("Cleaned up short-term memory storage, kept 800 active users")
 
     def add_message(self, user_id: str, role: str, content: str):
         """
@@ -137,6 +161,11 @@ class ShortTermMemory:
 
         # 保持消息数量在限制内
         self._prune_messages(user_id)
+
+        # 定期清理内存存储
+        self._memory_ops += 1
+        if self._memory_ops % 100 == 0:
+            self._cleanup_memory_storage()
 
     def _generate_summary(self, user_id: str):
         """为内存模式生成摘要"""
@@ -382,5 +411,12 @@ class ShortTermMemory:
         return self._backend
 
 
-# 全局记忆实例（自动检测后端）
-short_term_memory = ShortTermMemory(backend="auto")
+_short_term_memory = None
+
+
+def get_short_term_memory():
+    """惰性获取全局短期记忆实例"""
+    global _short_term_memory
+    if _short_term_memory is None:
+        _short_term_memory = ShortTermMemory(backend="auto")
+    return _short_term_memory

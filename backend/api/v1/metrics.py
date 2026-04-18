@@ -281,7 +281,7 @@ async def get_intent_sample(
         IntentClassificationLog.metric_date >= query_start_date,
         IntentClassificationLog.metric_date <= query_end_date,
         IntentClassificationLog.is_sampled == False
-    ).order_by(func.random()).limit(limit).all()
+    ).order_by(func.rand()).limit(limit).all()
 
     # 标记为已抽样
     for log in logs:

@@ -1,7 +1,7 @@
 """
 实时聊天会话模型
 """
-from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Text, Index
+from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Text, Index, Boolean
 from sqlalchemy.orm import relationship
 from db.session import Base
 from utils.timezone import now
@@ -63,7 +63,7 @@ class ChatMessage(Base):
     customer_id = Column(String(36), ForeignKey("users.id"), nullable=True, comment="客户ID: 标识该消息所属的客户")
 
     # 是否已读
-    is_read = Column(String(1), default="0", comment="是否已读: 0/1")
+    is_read = Column(Boolean, default=False, comment="是否已读")
     read_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), default=now)

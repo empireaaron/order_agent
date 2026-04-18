@@ -1,19 +1,20 @@
 """
 LangGraph 智能体节点函数
 """
+import json
 import logging
 import re
 
 from utils.timezone import now
 
 from langchain_core.prompts import ChatPromptTemplate
-from langgraph.graph import END, StateGraph
 
 from config import settings
 from db.session import get_db_context
 from models import User, Ticket
 from agents.state import AgentState
 from utils.metrics import metrics
+from sqlalchemy import func
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,6 @@ def create_ticket_node(state: AgentState) -> AgentState:
 
             # 解析 LLM 响应
             try:
-                import json
                 result = json.loads(response.content)
                 title = result.get("title") or user_input[:50]
                 priority = result.get("priority") or "normal"
@@ -370,12 +370,16 @@ def query_knowledge_node(state: AgentState) -> AgentState:
                 query_vector = generate_embedding(user_input)
 
                 # 2.2 并行搜索所有知识库
-                all_raw_results = search_kb_batch(
-                    query_vector=query_vector,
-                    knowledge_bases=kb_list,
-                    top_k=10,
-                    similarity_threshold=0.3
-                )
+                if query_vector:
+                    all_raw_results = search_kb_batch(
+                        query_vector=query_vector,
+                        knowledge_bases=kb_list,
+                        top_k=10,
+                        similarity_threshold=0.3
+                    )
+                else:
+                    logger.warning("Embedding generation failed, skipping KB search")
+                    all_raw_results = []
                 logger.debug(f"Knowledge base search returned {len(all_raw_results)} results")
                 for x in all_raw_results:
                     '''打印搜素到的内容'''
@@ -431,15 +435,17 @@ def query_knowledge_node(state: AgentState) -> AgentState:
 历史：
 {conversation_history}
 
-知识库：
+<knowledge_base>
 {kb_context}
+</knowledge_base>
 
 无相关信息请建议创建工单。"""
                 else:
                     system_prompt = f"""你是客服助手。请根据知识库回答。
 
-知识库：
+<knowledge_base>
 {kb_context}
+</knowledge_base>
 
 无相关信息请建议创建工单。"""
 
@@ -523,7 +529,6 @@ def process_ticket_node(state: AgentState) -> AgentState:
 
             # 解析 LLM 响应
             try:
-                import json
                 result = json.loads(response.content)
                 operation = result.get("operation", "unknown")
                 ticket_no = result.get("ticket_no")
@@ -744,7 +749,6 @@ def _detect_operation_simple(user_input: str) -> str:
 
 def _extract_ticket_no(user_input: str) -> str:
     """从用户输入中提取工单号"""
-    import re
     match = re.search(r'(TKT-\d{14}|\d{14})', user_input)
     return match.group(1) if match else None
 
@@ -762,9 +766,6 @@ def summary_node(state: AgentState) -> AgentState:
 
     try:
         with get_db_context() as db:
-            from models import Ticket
-            from sqlalchemy import func
-
             # 统计各状态工单数量
             stats = db.query(Ticket.status, func.count(Ticket.id)).filter(
                 Ticket.customer_id == customer_id
@@ -941,6 +942,7 @@ def route_knowledge(state: AgentState) -> str:
 # 构建工单处理图
 def build_ticket_bot_graph():
     """构建工单处理图"""
+    from langgraph.graph import END, StateGraph
     workflow = StateGraph(AgentState)
 
     # 添加节点
@@ -985,5 +987,12 @@ def build_ticket_bot_graph():
     return workflow.compile()
 
 
-# 全局图实例
-ticket_bot_graph = build_ticket_bot_graph()
+_ticket_bot_graph = None
+
+
+def get_ticket_bot_graph():
+    """惰性获取工单处理图实例"""
+    global _ticket_bot_graph
+    if _ticket_bot_graph is None:
+        _ticket_bot_graph = build_ticket_bot_graph()
+    return _ticket_bot_graph

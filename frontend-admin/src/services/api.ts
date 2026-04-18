@@ -18,7 +18,9 @@ const getRefreshToken = () => useAuthStore.getState().refreshToken
 api.interceptors.request.use(
   (config) => {
     const token = getToken()
-    console.log('[API Request]', config.url, 'Token:', token ? '存在' : '不存在')
+    if (import.meta.env.DEV) {
+      console.log('[API Request]', config.url, 'Token:', token ? '存在' : '不存在')
+    }
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }

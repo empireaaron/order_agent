@@ -14,10 +14,11 @@ logger = logging.getLogger(__name__)
 def get_minio_client():
     """获取 MinIO 客户端"""
     return Minio(
-        settings.settings.MINIO_ENDPOINT,
+
+        settings.MINIO_ENDPOINT,
         access_key=settings.MINIO_ACCESS_KEY,
         secret_key=settings.MINIO_SECRET_KEY,
-        secure=settings.settings.MINIO_SECURE
+        secure=settings.MINIO_SECURE
     )
 
 
@@ -76,6 +77,7 @@ def download_file(object_name: str) -> bytes:
     """
     client = get_minio_client()
 
+    response = None
     try:
         response = client.get_object(settings.MINIO_BUCKET, object_name)
         return response.read()
@@ -83,8 +85,9 @@ def download_file(object_name: str) -> bytes:
         logger.error("Error downloading file: %s", e)
         return b""
     finally:
-        response.close()
-        response.release_conn()
+        if response:
+            response.close()
+            response.release_conn()
 
 
 def delete_file(object_name: str) -> bool:

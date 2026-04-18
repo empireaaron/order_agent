@@ -2,13 +2,14 @@
 工单 API 路由
 """
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from db.session import get_db
 from auth.middleware import get_current_active_user, ROLE_ADMIN, ROLE_AGENT
 from models import User, Ticket as TicketModel
-from schemas.ticket import TicketCreate, TicketUpdate, TicketMessageCreate, TicketMessage, Ticket as TicketSchema
+from schemas.ticket import TicketCreate, TicketUpdate, TicketMessageCreate, TicketMessage, TicketStatusUpdate, Ticket as TicketSchema
 from tools.mysql_tools import create_ticket, get_tickets_by_customer, get_ticket_by_id, update_ticket_status, add_ticket_message, get_ticket_messages, get_all_tickets
+from api.v1.auth import _check_rate_limit
 
 router = APIRouter(prefix="/tickets", tags=["Tickets"])
 
@@ -20,6 +21,9 @@ def create_new_ticket(
     current_user: User = Depends(get_current_active_user)
 ):
     """创建新工单"""
+    if not _check_rate_limit(f"create_ticket:{current_user.id}", max_requests=10, window=60):
+        raise HTTPException(status_code=429, detail="操作过于频繁，请稍后再试")
+
     db_ticket = create_ticket(
         db=db,
         title=ticket.title,
@@ -117,6 +121,9 @@ def add_ticket_message_endpoint(
     current_user: User = Depends(get_current_active_user)
 ):
     """添加工单消息，根据发送者自动更新工单状态"""
+    if not _check_rate_limit(f"ticket_message:{current_user.id}", max_requests=10, window=60):
+        raise HTTPException(status_code=429, detail="操作过于频繁，请稍后再试")
+
     ticket = get_ticket_by_id(db=db, ticket_id=ticket_id)
     if ticket is None:
         raise HTTPException(status_code=404, detail="Ticket not found")
@@ -149,6 +156,8 @@ def add_ticket_message_endpoint(
 @router.get("/{ticket_id}/messages", response_model=list[TicketMessage])
 def read_ticket_messages(
     ticket_id: str,
+    skip: int = 0,
+    limit: int = 50,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -157,7 +166,12 @@ def read_ticket_messages(
     if ticket is None:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
-    messages = get_ticket_messages(db=db, ticket_id=ticket_id)
+    from models import TicketMessage as TicketMessageModel
+    messages = db.query(TicketMessageModel).options(
+        joinedload(TicketMessageModel.sender)
+    ).filter(
+        TicketMessageModel.ticket_id == ticket_id
+    ).order_by(TicketMessageModel.created_at.asc()).offset(skip).limit(limit).all()
     return messages
 
 
@@ -224,7 +238,7 @@ def assign_ticket(
 @router.patch("/{ticket_id}/status")
 def update_ticket_status_endpoint(
     ticket_id: str,
-    status_update: dict,
+    status_update: TicketStatusUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -233,14 +247,11 @@ def update_ticket_status_endpoint(
     if ticket is None:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
-    to_status = status_update.get("to_status")
-    note = status_update.get("note")
-
     ticket = update_ticket_status(
         db=db,
         ticket_id=ticket_id,
-        to_status=to_status,
+        to_status=status_update.to_status,
         changed_by_id=current_user.id,
-        note=note
+        note=status_update.note
     )
     return ticket

@@ -4,6 +4,7 @@
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
@@ -15,11 +16,52 @@ from schemas.knowledge_base import KnowledgeBaseCreate, KnowledgeBaseUpdate, Kno
 from tools.mysql_tools import create_knowledge_base, get_knowledge_bases_by_owner, create_document, update_document_status
 from tools.milvus_tools import create_knowledge_base_collection
 from tools.minio_tools import upload_file
-from tools.document_processor import process_document
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/knowledge", tags=["Knowledge Base"])
+
+# 文档处理线程池（限制并发数，避免线程和连接池耗尽）
+_doc_processor_pool = ThreadPoolExecutor(max_workers=4)
+
+
+def _process_document_task(doc_id_copy, object_name_copy, file_ext_copy, collection_name_copy):
+    """后台处理文档（向量化）"""
+    from tools.document_processor import process_document
+    from db.session import SessionLocal
+    from tools.mysql_tools import update_document_status
+
+    thread_db = SessionLocal()
+    try:
+        result = process_document(
+            doc_id=doc_id_copy,
+            file_path=object_name_copy,
+            file_type=file_ext_copy,
+            collection_name=collection_name_copy
+        )
+        if result["success"]:
+            update_document_status(
+                db=thread_db,
+                doc_id=doc_id_copy,
+                status="indexed",
+                chunk_count=result["chunk_count"]
+            )
+        else:
+            update_document_status(
+                db=thread_db,
+                doc_id=doc_id_copy,
+                status="failed",
+                error_message=result["error"]
+            )
+    except Exception as e:
+        update_document_status(
+            db=thread_db,
+            doc_id=doc_id_copy,
+            status="failed",
+            error_message=str(e)
+        )
+    finally:
+        thread_db.close()
 
 
 @router.post("/", response_model=KnowledgeBaseSchema)
@@ -128,9 +170,13 @@ def upload_document(
         raise HTTPException(status_code=400, detail=f"File type not allowed. Allowed types: {allowed_types}")
 
     # 读取文件内容并上传到 MinIO
+    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
     try:
         content = file.file.read()
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=413, detail="File too large. Maximum size is 50MB")
         object_name = f"{kb_id}/{safe_filename}"
+        file.file.close()
 
         # 上传到 MinIO
         success, result = upload_file(
@@ -162,52 +208,17 @@ def upload_document(
         doc_id = str(db_doc.id)
         collection_name = str(kb.collection_name)
 
-        # 异步处理文档（向量化）
-        import threading
-        def process_in_background(doc_id_copy, object_name_copy, file_ext_copy, collection_name_copy):
-            # 在线程内创建新的 session
-            from db.session import SessionLocal
-            thread_db = SessionLocal()
-            try:
-                result = process_document(
-                    doc_id=doc_id_copy,
-                    file_path=object_name_copy,
-                    file_type=file_ext_copy,
-                    collection_name=collection_name_copy
-                )
-                if result["success"]:
-                    update_document_status(
-                        db=thread_db,
-                        doc_id=doc_id_copy,
-                        status="indexed",
-                        chunk_count=result["chunk_count"]
-                    )
-                else:
-                    update_document_status(
-                        db=thread_db,
-                        doc_id=doc_id_copy,
-                        status="failed",
-                        error_message=result["error"]
-                    )
-            except Exception as e:
-                update_document_status(
-                    db=thread_db,
-                    doc_id=doc_id_copy,
-                    status="failed",
-                    error_message=str(e)
-                )
-            finally:
-                thread_db.close()
-
-        # 启动后台线程处理
-        thread = threading.Thread(
-            target=process_in_background,
-            args=(doc_id, object_name, file_ext, collection_name)
+        # 提交到线程池异步处理文档（限制并发数）
+        _doc_processor_pool.submit(
+            _process_document_task,
+            doc_id, object_name, file_ext, collection_name
         )
-        thread.start()
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Failed to process file upload")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
     # 返回上传信息
     return {
@@ -221,6 +232,8 @@ def upload_document(
 @router.get("/{kb_id}/documents", response_model=list[DocumentSchema])
 def read_documents(
     kb_id: str,
+    skip: int = 0,
+    limit: int = 20,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -229,7 +242,7 @@ def read_documents(
     if kb is None:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
 
-    documents = db.query(Document).filter(Document.knowledge_base_id == kb_id).all()
+    documents = db.query(Document).filter(Document.knowledge_base_id == kb_id).offset(skip).limit(limit).all()
     return documents
 
 
@@ -262,11 +275,16 @@ def delete_document(
 
     # 2. 从 Milvus 删除该文档的所有向量数据
     try:
-        from db.milvus import milvus_manager
-        milvus_manager.delete(
-            collection_name=kb.collection_name,
-            expr=f"id like '{doc.id}_%'"
-        )
+        from db.milvus import get_milvus_manager
+        # 清理 doc.id，只允许 UUID 安全字符，防止 Milvus 表达式注入
+        safe_doc_id = re.sub(r"[^0-9a-fA-F\-]", "", doc.id)
+        if safe_doc_id:
+            get_milvus_manager().delete(
+                collection_name=kb.collection_name,
+                expr=f"id like '{safe_doc_id}_%'"
+            )
+        else:
+            logger.warning("Invalid document id '%s', skipping Milvus deletion", doc.id)
     except Exception as e:
         logger.warning("Failed to delete vectors from Milvus: %s", e)
 
@@ -298,10 +316,20 @@ def delete_knowledge_base(
     if kb.owner_id != current_user.id and current_user.role_id != 1:
         raise HTTPException(status_code=403, detail="Not allowed to delete this knowledge base")
 
+    # 删除 MinIO 中的文件
+    try:
+        from tools.minio_tools import delete_file
+        documents = db.query(Document).filter(Document.knowledge_base_id == kb_id).all()
+        for doc in documents:
+            if doc.file_path:
+                delete_file(doc.file_path)
+    except Exception as e:
+        logger.warning("Failed to delete files from MinIO: %s", e)
+
     # 删除 Milvus collection
     try:
-        from db.milvus import milvus_manager
-        milvus_manager.drop_collection(kb.collection_name)
+        from db.milvus import get_milvus_manager
+        get_milvus_manager().drop_collection(kb.collection_name)
     except Exception as e:
         logger.warning("Failed to drop Milvus collection: %s", e)
 

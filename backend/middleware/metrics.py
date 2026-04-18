@@ -6,6 +6,7 @@ import time
 import logging
 import re
 from fastapi import Request, Response
+from fastapi import HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
@@ -65,6 +66,10 @@ class MetricsMiddleware(BaseHTTPMiddleware):
             )
             metrics.record_error(type(e).__name__, endpoint)
             logger.error(f"Request failed: {request.method} {path} - {e}")
+            # 为 HTTPException 附加响应时间头
+            if isinstance(e, HTTPException):
+                e.headers = e.headers or {}
+                e.headers["X-Response-Time-Ms"] = str(round(latency_ms, 2))
             raise
 
     def _normalize_path(self, path: str) -> str:

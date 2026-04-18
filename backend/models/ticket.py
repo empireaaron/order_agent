@@ -49,8 +49,8 @@ class User(Base):
     last_login_at = Column(DateTime(timezone=True), nullable=True, comment="最后登录时间")
     avatar_url = Column(String(500), nullable=True, comment="头像URL")
 
-    created_at = Column(DateTime, default=now, comment="创建时间")
-    updated_at = Column(DateTime, default=now, onupdate=now, comment="更新时间")
+    created_at = Column(DateTime(timezone=True), default=now, comment="创建时间")
+    updated_at = Column(DateTime(timezone=True), default=now, onupdate=now, comment="更新时间")
 
     # 关系
     role = relationship("Role", back_populates="users")
@@ -98,13 +98,13 @@ class Ticket(Base):
     ticket_no = Column(String(50), unique=True, index=True, comment="工单编号")
     title = Column(String(255), nullable=False, comment="工单标题")
     content = Column(Text, nullable=False, comment="工单内容")
-    priority = Column(String(20), default="normal", comment="优先级: low, normal, high, urgent")
+    priority = Column(String(20), default="normal", index=True, comment="优先级: low, normal, high, urgent")
     category = Column(String(50), default="general", comment="分类: technical, billing, account, other")
-    status = Column(String(30), default="open", comment="状态: open, pending, in_progress, resolved, closed")
+    status = Column(String(30), default="open", index=True, comment="状态: open, pending, in_progress, resolved, closed")
 
     # 关联字段
-    customer_id = Column(String(36), ForeignKey("users.id"), nullable=False, comment="客户ID")
-    assigned_agent_id = Column(String(36), ForeignKey("users.id"), nullable=True, comment="分配的客服ID")
+    customer_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True, comment="客户ID")
+    assigned_agent_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True, comment="分配的客服ID")
 
     # 客户信息快照
     customer_info = Column(JSON, nullable=True, comment="客户信息 (JSON: name, email, phone)")
@@ -113,10 +113,10 @@ class Ticket(Base):
     meta_data = Column(JSON, nullable=True, comment="元数据 (JSON)")
 
     # 时间字段
-    resolved_at = Column(DateTime(timezone=True), nullable=True, comment="解决时间")
+    resolved_at = Column(DateTime(timezone=True), nullable=True, index=True, comment="解决时间")
     closed_at = Column(DateTime(timezone=True), nullable=True, comment="关闭时间")
 
-    created_at = Column(DateTime(timezone=True), default=now, comment="创建时间")
+    created_at = Column(DateTime(timezone=True), default=now, index=True, comment="创建时间")
     updated_at = Column(DateTime(timezone=True), default=now, onupdate=now, comment="更新时间")
 
     # 关系
@@ -152,8 +152,8 @@ class TicketMessage(Base):
     __tablename__ = "ticket_messages"
 
     id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid4()))
-    ticket_id = Column(String(36), ForeignKey("tickets.id"), nullable=False, comment="工单ID")
-    sender_id = Column(String(36), ForeignKey("users.id"), nullable=True, comment="发送者ID (用户ID或NULL表示系统)")
+    ticket_id = Column(String(36), ForeignKey("tickets.id"), nullable=False, index=True, comment="工单ID")
+    sender_id = Column(String(36), ForeignKey("users.id"), nullable=True, index=True, comment="发送者ID (用户ID或NULL表示系统)")
     sender_type = Column(String(20), default="customer", comment="发送者类型: customer, agent, system")
     content = Column(Text, nullable=False, comment="消息内容")
     message_type = Column(String(20), default="text", comment="消息类型: text, image, file")
@@ -184,13 +184,13 @@ class TicketStatusLog(Base):
     __tablename__ = "ticket_status_logs"
 
     id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid4()))
-    ticket_id = Column(String(36), ForeignKey("tickets.id"), nullable=False, comment="工单ID")
+    ticket_id = Column(String(36), ForeignKey("tickets.id"), nullable=False, index=True, comment="工单ID")
     from_status = Column(String(30), nullable=True, comment="原状态")
     to_status = Column(String(30), nullable=False, comment="新状态")
-    changed_by_id = Column(String(36), ForeignKey("users.id"), nullable=False, comment="变更者ID")
+    changed_by_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True, comment="变更者ID")
     note = Column(Text, nullable=True, comment="备注")
 
-    created_at = Column(DateTime, default=now, comment="创建时间")
+    created_at = Column(DateTime(timezone=True), default=now, comment="创建时间")
 
     # 关系
     ticket = relationship("Ticket", back_populates="status_logs")

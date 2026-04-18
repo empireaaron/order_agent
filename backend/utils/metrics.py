@@ -4,6 +4,7 @@
 """
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any, Optional
 from collections import defaultdict, deque
 from datetime import timedelta, date
@@ -42,6 +43,7 @@ class MetricsCollector:
 
         self._initialized = True
         self._lock = threading.Lock()
+        self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="metrics-")
 
         # API 响应时间统计 (最近 1000 条) - 仅内存
         self.api_latencies: Dict[str, deque] = defaultdict(lambda: deque(maxlen=1000))
@@ -55,6 +57,10 @@ class MetricsCollector:
 
         # 错误统计 - 仅内存
         self.error_counts: Dict[str, int] = defaultdict(int)
+        self._error_keys_order: deque = deque(maxlen=100)
+
+        # 操作计数器（用于触发内存清理）
+        self._ops_counter = 0
 
         # WebSocket 连接统计 - 仅内存
         self.ws_stats = {
@@ -249,11 +255,32 @@ class MetricsCollector:
             })
 
         # 异步保存到数据库（不阻塞主流程）
-        threading.Thread(
-            target=self._save_api_metric_to_db,
-            args=(endpoint, method, latency_ms, False),
-            daemon=True
-        ).start()
+        self._executor.submit(self._save_api_metric_to_db, endpoint, method, latency_ms, False)
+
+    def _cleanup_memory_stats(self):
+        """清理内存中的过期统计，防止无限增长"""
+        # 限制意图类型数量
+        if len(self.intent_stats["by_intent"]) > 50:
+            # 保留统计量最大的 40 个意图
+            sorted_intents = sorted(
+                self.intent_stats["by_intent"].items(),
+                key=lambda x: x[1]["total"],
+                reverse=True
+            )[:40]
+            self.intent_stats["by_intent"] = defaultdict(
+                lambda: {"total": 0, "correct": 0},
+                dict(sorted_intents)
+            )
+            logger.debug("Cleaned up intent_stats memory cache")
+
+        # 限制错误类型数量
+        if len(self.error_counts) > 100:
+            # 保留统计量最大的 80 个错误类型
+            sorted_errors = sorted(self.error_counts.items(), key=lambda x: x[1], reverse=True)[:80]
+            self.error_counts = defaultdict(int, dict(sorted_errors))
+            self._error_keys_order.clear()
+            self._error_keys_order.extend([k for k, _ in sorted_errors])
+            logger.debug("Cleaned up error_counts memory cache")
 
     def record_intent_classification(self, intent: str, confidence: float = 1.0,
                                      is_correct: Optional[bool] = None,
@@ -279,33 +306,31 @@ class MetricsCollector:
                     self.intent_stats["correct"] += 1
                     self.intent_stats["by_intent"][intent]["correct"] += 1
 
+            self._ops_counter += 1
+            if self._ops_counter % 100 == 0:
+                self._cleanup_memory_stats()
+
         # 异步保存到数据库（聚合统计）
-        threading.Thread(
-            target=self._save_intent_to_db,
-            args=(intent, is_correct, confidence),
-            daemon=True
-        ).start()
+        self._executor.submit(self._save_intent_to_db, intent, is_correct, confidence)
 
         # 异步保存明细日志（用于抽样标注）
         if user_input:
-            threading.Thread(
-                target=self._save_intent_log_to_db,
-                args=(log_id, intent, user_input, confidence),
-                daemon=True
-            ).start()
+            self._executor.submit(self._save_intent_log_to_db, log_id, intent, user_input, confidence)
 
     def record_error(self, error_type: str, endpoint: Optional[str] = None):
         """记录错误"""
         key = f"{error_type}:{endpoint}" if endpoint else error_type
         with self._lock:
             self.error_counts[key] += 1
+            if key not in self._error_keys_order:
+                self._error_keys_order.append(key)
+
+            self._ops_counter += 1
+            if self._ops_counter % 100 == 0:
+                self._cleanup_memory_stats()
 
         # 异步保存到数据库
-        threading.Thread(
-            target=self._save_error_to_db,
-            args=(error_type, endpoint),
-            daemon=True
-        ).start()
+        self._executor.submit(self._save_error_to_db, error_type, endpoint)
 
     def record_ws_connection(self, connected: bool = True):
         """记录 WebSocket 连接/断开（仅内存）"""
@@ -323,6 +348,54 @@ class MetricsCollector:
                 self.ws_stats["messages_sent"] += 1
             else:
                 self.ws_stats["messages_received"] += 1
+
+    def _fetch_api_stats_from_db(self, time_window_minutes: int) -> Dict[str, Any]:
+        """从数据库获取 API 历史聚合数据（在线程池中执行）"""
+        result = {}
+        db = self._get_db()
+        if not db:
+            return result
+
+        try:
+            from models import ApiMetrics
+            from sqlalchemy import func
+
+            # 计算查询的起始日期（根据time_window_minutes）
+            days_back = max(1, time_window_minutes // (24 * 60))
+            start_date = date.today() - timedelta(days=days_back)
+
+            db_stats = db.query(
+                ApiMetrics.endpoint,
+                ApiMetrics.method,
+                func.sum(ApiMetrics.request_count).label('total_requests'),
+                func.sum(ApiMetrics.error_count).label('total_errors'),
+                func.sum(ApiMetrics.latency_sum_ms).label('total_latency'),
+                func.min(ApiMetrics.latency_min_ms).label('min_latency'),
+                func.max(ApiMetrics.latency_max_ms).label('max_latency')
+            ).filter(
+                ApiMetrics.metric_date >= start_date
+            ).group_by(ApiMetrics.endpoint, ApiMetrics.method).all()
+
+            for stat in db_stats:
+                key = f"{stat.method} {stat.endpoint}"
+                # 转换为 float 避免 decimal 类型错误
+                total_latency = float(stat.total_latency) if stat.total_latency else 0
+                total_requests = float(stat.total_requests) if stat.total_requests else 0
+                result[key] = {
+                    "count": int(stat.total_requests) if stat.total_requests else 0,
+                    "error_count": int(stat.total_errors) if stat.total_errors else 0,
+                    "avg_latency_ms": round(total_latency / total_requests, 2) if total_requests > 0 else 0,
+                    "min_ms": round(float(stat.min_latency), 2) if stat.min_latency else 0,
+                    "max_ms": round(float(stat.max_latency), 2) if stat.max_latency else 0,
+                    "source": "db"
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to get DB API stats: {e}")
+        finally:
+            db.close()
+
+        return result
 
     def get_api_stats(self, endpoint: Optional[str] = None,
                       time_window_minutes: int = 60) -> Dict[str, Any]:
@@ -355,50 +428,58 @@ class MetricsCollector:
                     "max_ms": round(latencies[-1], 2)
                 }
 
-        # 从数据库获取历史聚合数据
-        db = self._get_db()
-        if db:
-            try:
-                from models import ApiMetrics
-                from sqlalchemy import func
-
-                # 计算查询的起始日期（根据time_window_minutes）
-                days_back = max(1, time_window_minutes // (24 * 60))
-                start_date = date.today() - timedelta(days=days_back)
-
-                db_stats = db.query(
-                    ApiMetrics.endpoint,
-                    ApiMetrics.method,
-                    func.sum(ApiMetrics.request_count).label('total_requests'),
-                    func.sum(ApiMetrics.error_count).label('total_errors'),
-                    func.sum(ApiMetrics.latency_sum_ms).label('total_latency'),
-                    func.min(ApiMetrics.latency_min_ms).label('min_latency'),
-                    func.max(ApiMetrics.latency_max_ms).label('max_latency')
-                ).filter(
-                    ApiMetrics.metric_date >= start_date
-                ).group_by(ApiMetrics.endpoint, ApiMetrics.method).all()
-
-                for stat in db_stats:
-                    key = f"{stat.method} {stat.endpoint}"
-                    if key not in result:
-                        # 转换为 float 避免 decimal 类型错误
-                        total_latency = float(stat.total_latency) if stat.total_latency else 0
-                        total_requests = float(stat.total_requests) if stat.total_requests else 0
-                        result[key] = {
-                            "count": int(stat.total_requests) if stat.total_requests else 0,
-                            "error_count": int(stat.total_errors) if stat.total_errors else 0,
-                            "avg_latency_ms": round(total_latency / total_requests, 2) if total_requests > 0 else 0,
-                            "min_ms": round(float(stat.min_latency), 2) if stat.min_latency else 0,
-                            "max_ms": round(float(stat.max_latency), 2) if stat.max_latency else 0,
-                            "source": "db"
-                        }
-
-                db.close()
-            except Exception as e:
-                logger.error(f"Failed to get DB API stats: {e}")
-                db.close()
+        # 从数据库获取历史聚合数据（放入线程池避免阻塞主线程）
+        try:
+            db_result = self._executor.submit(
+                self._fetch_api_stats_from_db, time_window_minutes
+            ).result(timeout=10)
+            # 合并数据库结果，内存中已有的端点优先使用内存数据
+            for key, value in db_result.items():
+                if key not in result:
+                    result[key] = value
+        except Exception as e:
+            logger.error(f"Failed to fetch API stats from DB in executor: {e}")
 
         return result
+
+    def _fetch_intent_stats_from_db(self, days: int) -> Dict[str, Any]:
+        """从数据库获取意图识别聚合数据（在线程池中执行）"""
+        db_stats = {}
+        db = self._get_db()
+        if not db:
+            return db_stats
+
+        try:
+            from models import IntentMetrics
+            from sqlalchemy import func
+
+            start_date = date.today() - timedelta(days=days)
+
+            # 从数据库查询聚合数据
+            results = db.query(
+                IntentMetrics.intent,
+                func.sum(IntentMetrics.total).label('total'),
+                func.sum(IntentMetrics.correct).label('correct'),
+                func.sum(IntentMetrics.sampled).label('sampled'),
+                func.sum(IntentMetrics.sampled_correct).label('sampled_correct')
+            ).filter(
+                IntentMetrics.metric_date >= start_date
+            ).group_by(IntentMetrics.intent).all()
+
+            for r in results:
+                db_stats[r.intent] = {
+                    "total": r.total or 0,
+                    "correct": r.correct or 0,
+                    "sampled": r.sampled or 0,
+                    "sampled_correct": r.sampled_correct or 0
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to get DB intent stats: {e}")
+        finally:
+            db.close()
+
+        return db_stats
 
     def get_intent_stats(self, days: int = 7) -> Dict[str, Any]:
         """获取意图识别统计（内存 + 数据库）
@@ -406,40 +487,14 @@ class MetricsCollector:
         Args:
             days: 查询最近几天的数据
         """
-        # 合并内存和数据库的统计数据
-        db = self._get_db()
-        db_stats = {}
-
-        if db:
-            try:
-                from models import IntentMetrics
-                from sqlalchemy import func
-
-                start_date = date.today() - timedelta(days=days)
-
-                # 从数据库查询聚合数据
-                results = db.query(
-                    IntentMetrics.intent,
-                    func.sum(IntentMetrics.total).label('total'),
-                    func.sum(IntentMetrics.correct).label('correct'),
-                    func.sum(IntentMetrics.sampled).label('sampled'),
-                    func.sum(IntentMetrics.sampled_correct).label('sampled_correct')
-                ).filter(
-                    IntentMetrics.metric_date >= start_date
-                ).group_by(IntentMetrics.intent).all()
-
-                for r in results:
-                    db_stats[r.intent] = {
-                        "total": r.total or 0,
-                        "correct": r.correct or 0,
-                        "sampled": r.sampled or 0,
-                        "sampled_correct": r.sampled_correct or 0
-                    }
-
-                db.close()
-            except Exception as e:
-                logger.error(f"Failed to get DB intent stats: {e}")
-                db.close()
+        # 从数据库获取历史聚合数据（放入线程池避免阻塞主线程）
+        try:
+            db_stats = self._executor.submit(
+                self._fetch_intent_stats_from_db, days
+            ).result(timeout=10)
+        except Exception as e:
+            logger.error(f"Failed to fetch intent stats from DB in executor: {e}")
+            db_stats = {}
 
         # 合并内存中的今日数据
         with self._lock:
@@ -480,35 +535,48 @@ class MetricsCollector:
 
         return stats
 
+    def _fetch_error_stats_from_db(self, days: int) -> Dict[str, int]:
+        """从数据库获取错误统计数据（在线程池中执行）"""
+        db_errors = {}
+        db = self._get_db()
+        if not db:
+            return db_errors
+
+        try:
+            from models import ErrorMetrics
+            from sqlalchemy import func
+
+            start_date = date.today() - timedelta(days=days)
+
+            results = db.query(
+                ErrorMetrics.error_type,
+                ErrorMetrics.endpoint,
+                func.sum(ErrorMetrics.count).label('total')
+            ).filter(
+                ErrorMetrics.metric_date >= start_date
+            ).group_by(ErrorMetrics.error_type, ErrorMetrics.endpoint).all()
+
+            for r in results:
+                key = f"{r.error_type}:{r.endpoint}" if r.endpoint else r.error_type
+                db_errors[key] = r.total
+
+        except Exception as e:
+            logger.error(f"Failed to get DB error stats: {e}")
+        finally:
+            db.close()
+
+        return db_errors
+
     def get_error_stats(self, days: int = 7) -> Dict[str, int]:
         """获取错误统计（内存 + 数据库）"""
-        # 从数据库获取历史数据
-        db = self._get_db()
-        db_errors = {}
-
-        if db:
-            try:
-                from models import ErrorMetrics
-                from sqlalchemy import func
-
-                start_date = date.today() - timedelta(days=days)
-
-                results = db.query(
-                    ErrorMetrics.error_type,
-                    ErrorMetrics.endpoint,
-                    func.sum(ErrorMetrics.count).label('total')
-                ).filter(
-                    ErrorMetrics.metric_date >= start_date
-                ).group_by(ErrorMetrics.error_type, ErrorMetrics.endpoint).all()
-
-                for r in results:
-                    key = f"{r.error_type}:{r.endpoint}" if r.endpoint else r.error_type
-                    db_errors[key] = r.total
-
-                db.close()
-            except Exception as e:
-                logger.error(f"Failed to get DB error stats: {e}")
-                db.close()
+        # 从数据库获取历史数据（放入线程池避免阻塞主线程）
+        try:
+            db_errors = self._executor.submit(
+                self._fetch_error_stats_from_db, days
+            ).result(timeout=10)
+        except Exception as e:
+            logger.error(f"Failed to fetch error stats from DB in executor: {e}")
+            db_errors = {}
 
         # 合并内存中的今日数据
         with self._lock:

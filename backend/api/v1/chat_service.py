@@ -6,10 +6,11 @@ import traceback
 
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_, and_, func
+from sqlalchemy import or_, and_, func, update
 from typing import List, Optional
 from datetime import timedelta
 import asyncio
+from pydantic import BaseModel, Field, ConfigDict
 
 from db.session import get_db
 from auth.middleware import get_current_active_user, ROLE_ADMIN, ROLE_AGENT
@@ -17,10 +18,35 @@ from models import User
 from models.chat import ChatSession, ChatMessage, AgentStatus
 from websocket.chat import chat_ws_manager
 from utils.timezone import now
+from api.v1.auth import _check_rate_limit
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat-service", tags=["Chat Service"])
+
+
+class ChatMessageCreate(BaseModel):
+    """发送聊天消息请求参数"""
+    model_config = ConfigDict(extra="ignore")
+
+    content: str = Field(..., min_length=1, max_length=5000, description="消息内容")
+    type: str = Field(default="text", description="消息类型: text/image/file")
+
+
+class AIMessageCreate(BaseModel):
+    """保存 AI 聊天消息请求参数"""
+    model_config = ConfigDict(extra="ignore")
+
+    role: str = Field(..., pattern=r"^(customer|ai)$", description="角色: customer 或 ai")
+    content: str = Field(..., min_length=1, max_length=5000, description="消息内容")
+
+
+class ChatSessionCreate(BaseModel):
+    """创建聊天会话请求参数"""
+    model_config = ConfigDict(extra="ignore")
+
+    request_type: str = Field(default="general", max_length=50, description="请求类型")
+    message: str = Field(default="", max_length=2000, description="客户初始消息")
 
 
 async def notify_session_assigned(user_id: str, session_id: str, agent_id: str, agent_name: str):
@@ -102,7 +128,7 @@ async def notify_agent_new_session(agent_id: str, session_id: str, customer_info
     )
 
 
-async def notify_session_closed(session_id: str, customer_id: str, agent_id: str | None, closed_by: str):
+async def notify_session_closed(session_id: str, customer_id: str, agent_id: Optional[str], closed_by: str):
     """后台任务：通知双方会话已关闭"""
     message = {
         "type": "session_closed",
@@ -119,7 +145,7 @@ async def notify_session_closed(session_id: str, customer_id: str, agent_id: str
 
 @router.post("/sessions")
 def create_chat_session(
-    request: dict,
+    request: ChatSessionCreate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -127,15 +153,18 @@ def create_chat_session(
     """
     客户发起转人工，创建聊天会话
     """
+    if not _check_rate_limit(f"chat_session:{current_user.id}", max_requests=30, window=60):
+        raise HTTPException(status_code=429, detail="操作过于频繁，请稍后再试")
+
     try:
         logger.debug("Creating chat session for user %s", current_user.id)
-        logger.debug("Request body: %s", request)
+        logger.debug("Request body: %s", request.model_dump())
 
         # 检查是否已有进行中的会话
         existing = db.query(ChatSession).filter(
             ChatSession.customer_id == current_user.id,
             ChatSession.status.in_(["waiting", "connected"])
-        ).first()
+        ).with_for_update().first()
 
         logger.debug("Existing session check: %s", existing)
 
@@ -169,8 +198,8 @@ def create_chat_session(
         session = ChatSession(
             customer_id=current_user.id,
             status="waiting",
-            request_type=request.get("request_type", "general"),
-            initial_message=request.get("message", "")
+            request_type=request.request_type,
+            initial_message=request.message
         )
         db.add(session)
         db.commit()
@@ -263,6 +292,8 @@ def create_chat_session(
 
 @router.get("/sessions/waiting")
 def get_waiting_sessions(
+    skip: int = 0,
+    limit: int = 50,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -272,9 +303,12 @@ def get_waiting_sessions(
     if current_user.role.code not in [ROLE_ADMIN, ROLE_AGENT]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    sessions = db.query(ChatSession).filter(
+    from sqlalchemy.orm import joinedload
+    sessions = db.query(ChatSession).options(
+        joinedload(ChatSession.customer)
+    ).filter(
         ChatSession.status == "waiting"
-    ).order_by(ChatSession.created_at).all()
+    ).order_by(ChatSession.created_at).offset(skip).limit(limit).all()
 
     return [{
         "id": s.id,
@@ -306,30 +340,37 @@ def accept_chat_session(
     session = db.query(ChatSession).filter(
         ChatSession.id == session_id,
         ChatSession.status == "waiting"
-    ).first()
+    ).with_for_update().first()
 
     if not session:
         raise HTTPException(status_code=404, detail="Session not found or already assigned")
 
-    # 检查客服当前会话数
+    # 检查客服当前会话数，使用原子更新避免竞态
     agent_status = db.query(AgentStatus).filter(
         AgentStatus.agent_id == current_user.id
     ).first()
 
-    if agent_status and agent_status.current_sessions >= agent_status.max_sessions:
-        raise HTTPException(status_code=400, detail="您已达到最大并发会话数")
+    if agent_status:
+        result = db.execute(
+            update(AgentStatus)
+            .where(
+                AgentStatus.agent_id == current_user.id,
+                AgentStatus.current_sessions < AgentStatus.max_sessions
+            )
+            .values(
+                current_sessions=AgentStatus.current_sessions + 1,
+                total_sessions_today=AgentStatus.total_sessions_today + 1
+            )
+        )
+        if result.rowcount == 0:
+            db.rollback()
+            raise HTTPException(status_code=400, detail="您已达到最大并发会话数")
 
     # 分配会话
     session.agent_id = current_user.id
     session.status = "connected"
     session.connected_at = now()
     db.commit()
-
-    # 更新客服状态
-    if agent_status:
-        agent_status.current_sessions = agent_status.current_sessions + 1
-        agent_status.total_sessions_today = agent_status.total_sessions_today + 1
-        db.commit()
 
     # 发送系统消息
     system_msg = ChatMessage(
@@ -395,9 +436,43 @@ def get_my_chat_sessions(
 
     sessions = query.options(
         joinedload(ChatSession.customer),
-        joinedload(ChatSession.agent),
-        joinedload(ChatSession.messages)
+        joinedload(ChatSession.agent)
     ).order_by(ChatSession.last_message_at.desc()).all()
+
+    session_ids = [s.id for s in sessions]
+    my_role = "agent" if current_user.role.code in ["admin", "agent"] else "customer"
+
+    # 批量查询未读消息数（数据库层聚合，避免加载全部消息到内存）
+    unread_rows = db.query(
+        ChatMessage.session_id,
+        func.count(ChatMessage.id)
+    ).filter(
+        ChatMessage.session_id.in_(session_ids),
+        ChatMessage.sender_type != my_role,
+        ChatMessage.is_read == False
+    ).group_by(ChatMessage.session_id).all()
+    unread_map = {sid: cnt for sid, cnt in unread_rows}
+
+    # 批量查询每会话的最后一条消息内容
+    latest_times = db.query(
+        ChatMessage.session_id,
+        func.max(ChatMessage.created_at).label("latest_at")
+    ).filter(ChatMessage.session_id.in_(session_ids)).group_by(ChatMessage.session_id).subquery()
+
+    latest_msgs = db.query(
+        ChatMessage.session_id,
+        ChatMessage.content
+    ).join(
+        latest_times,
+        and_(
+            ChatMessage.session_id == latest_times.c.session_id,
+            ChatMessage.created_at == latest_times.c.latest_at
+        )
+    ).all()
+    last_message_map = {}
+    for sid, content in latest_msgs:
+        if sid not in last_message_map:
+            last_message_map[sid] = content
 
     return [{
         "id": s.id,
@@ -410,10 +485,8 @@ def get_my_chat_sessions(
             "id": s.agent_id,
             "name": s.agent.full_name or s.agent.username
         } if s.agent else None,
-        "last_message": s.messages[-1].content if s.messages else None,
-        "unread_count": len([m for m in s.messages if m.sender_type != (
-            "agent" if current_user.role.code in ["admin", "agent"] else "customer"
-        ) and m.is_read == "0"]),
+        "last_message": last_message_map.get(s.id),
+        "unread_count": unread_map.get(s.id, 0),
         "created_at": s.created_at.isoformat()
     } for s in sessions]
 
@@ -421,7 +494,7 @@ def get_my_chat_sessions(
 @router.post("/sessions/{session_id}/messages")
 def send_chat_message(
     session_id: str,
-    message: dict,
+    message: ChatMessageCreate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -434,6 +507,9 @@ def send_chat_message(
     - AI/系统消息: sender_id = NULL
     customer_id 始终设置为该会话的客户ID
     """
+    if not _check_rate_limit(f"chat_message:{current_user.id}", max_requests=30, window=60):
+        raise HTTPException(status_code=429, detail="操作过于频繁，请稍后再试")
+
     session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -449,8 +525,8 @@ def send_chat_message(
         session_id=session_id,
         sender_id=current_user.id,
         sender_type=sender_type,
-        content=message.get("content", ""),
-        message_type=message.get("type", "text"),
+        content=message.content,
+        message_type=message.type,
         customer_id=session.customer_id  # 统一设置customer_id方便查询
     )
     db.add(chat_msg)
@@ -516,17 +592,17 @@ def get_chat_messages(
         customer_session_ids = [s[0] for s in customer_session_ids]
 
         # 构建查询 - 简化版：使用 customer_id
-        query = db.query(ChatMessage).filter(
-            or_(
-                # AI聊天阶段：该客户的所有消息（通过customer_id关联）
-                and_(
-                    ChatMessage.customer_id == customer_id,
-                    ChatMessage.session_id.is_(None)
-                ),
-                # 客服聊天阶段：该客户的所有会话消息
-                ChatMessage.session_id.in_(customer_session_ids) if customer_session_ids else False
+        conditions = [
+            # AI聊天阶段：该客户的所有消息（通过customer_id关联）
+            and_(
+                ChatMessage.customer_id == customer_id,
+                ChatMessage.session_id.is_(None)
             )
-        )
+        ]
+        if customer_session_ids:
+            # 客服聊天阶段：该客户的所有会话消息
+            conditions.append(ChatMessage.session_id.in_(customer_session_ids))
+        query = db.query(ChatMessage).filter(or_(*conditions))
 
         total = query.count()
         offset = (page - 1) * page_size
@@ -556,7 +632,7 @@ def get_chat_messages(
                 "id": m.sender_id,
                 "name": m.sender.full_name or m.sender.username if m.sender else None
             } if m.sender_id else None,
-            "is_read": m.is_read == "1",
+            "is_read": m.is_read,
             "created_at": m.created_at.isoformat()
         } for m in messages],
         "total": total,
@@ -576,7 +652,7 @@ def close_chat_session(
     """
     关闭会话
     """
-    session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
+    session = db.query(ChatSession).filter(ChatSession.id == session_id).with_for_update().first()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -587,14 +663,17 @@ def close_chat_session(
     session.closed_at = now()
     db.commit()
 
-    # 更新客服会话数
+    # 更新客服会话数（原子更新，避免竞态）
     if session.agent_id:
-        agent_status = db.query(AgentStatus).filter(
-            AgentStatus.agent_id == session.agent_id
-        ).first()
-        if agent_status:
-            agent_status.current_sessions = max(0, agent_status.current_sessions - 1)
-            db.commit()
+        db.execute(
+            update(AgentStatus)
+            .where(
+                AgentStatus.agent_id == session.agent_id,
+                AgentStatus.current_sessions > 0
+            )
+            .values(current_sessions=AgentStatus.current_sessions - 1)
+        )
+        db.commit()
 
     # WebSocket 通知双方会话已关闭
     background_tasks.add_task(
@@ -701,7 +780,7 @@ def auto_assign_agent(db: Session) -> Optional[AgentStatus]:
 
 @router.post("/ai-messages")
 def save_ai_message(
-    request: dict,
+    request: AIMessageCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -712,14 +791,14 @@ def save_ai_message(
     - AI消息：sender_id = NULL
     - customer_id = 客户ID（用于简化查询）
     """
+    if not _check_rate_limit(f"ai_message:{current_user.id}", max_requests=30, window=60):
+        raise HTTPException(status_code=429, detail="操作过于频繁，请稍后再试")
+
     try:
-        role = request.get("role")  # 'customer' 或 'ai'
-        content = request.get("content")
+        role = request.role
+        content = request.content
 
         logger.debug("save_ai_message called: role=%s, content=%s...", role, content[:50])
-
-        if not role or not content:
-            raise HTTPException(status_code=400, detail="Missing role or content")
 
         # 保存消息，session_id 为空表示这是AI聊天（未转人工）
         # sender_id 规则：客户消息用客户ID，AI消息用NULL
@@ -743,8 +822,10 @@ def save_ai_message(
             "content": content,
             "created_at": msg.created_at.isoformat()
         }
-    except Exception:
-        logger.exception("Error saving AI message")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error saving AI message: %s", e)
         raise HTTPException(status_code=500, detail="保存消息失败，请稍后重试")
 
 

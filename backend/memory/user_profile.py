@@ -5,8 +5,6 @@ import logging
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 from models import User, Ticket, TicketMessage
-from db.session import get_db
-
 logger = logging.getLogger(__name__)
 
 
@@ -14,22 +12,17 @@ class UserProfileManager:
     """用户画像管理器 - 聚合用户信息、历史工单等"""
 
     @staticmethod
-    def get_user_profile(user_id: int, db: Optional[Session] = None) -> Dict[str, Any]:
+    def get_user_profile(user_id: str, db: Session) -> Dict[str, Any]:
         """
         获取用户完整画像
 
         Args:
             user_id: 用户ID
-            db: 数据库会话（可选）
+            db: 数据库会话（由调用方提供）
 
         Returns:
             用户画像字典
         """
-        should_close_db = False
-        if db is None:
-            db = next(get_db())
-            should_close_db = True
-
         try:
             user = db.query(User).filter(User.id == user_id).first()
             if not user:
@@ -46,15 +39,24 @@ class UserProfileManager:
                 "created_at": user.created_at.isoformat() if user.created_at else None,
             }
 
-            # 2. 工单统计
-            tickets = db.query(Ticket).filter(Ticket.customer_id == user_id).all()
+            # 2. 工单统计（使用 SQL GROUP BY，避免加载全部工单到内存）
+            from sqlalchemy import func, case
+            stats_result = db.query(
+                func.count(Ticket.id).label("total"),
+                func.sum(case((Ticket.status == "open", 1), else_=0)).label("open"),
+                func.sum(case((Ticket.status.in_(["in_progress", "pending"]), 1), else_=0)).label("in_progress"),
+                func.sum(case((Ticket.status == "resolved", 1), else_=0)).label("resolved"),
+                func.sum(case((Ticket.status == "closed", 1), else_=0)).label("closed"),
+                func.sum(case((Ticket.status == "cancelled", 1), else_=0)).label("cancelled"),
+            ).filter(Ticket.customer_id == user_id).first()
+
             profile["ticket_stats"] = {
-                "total": len(tickets),
-                "open": len([t for t in tickets if t.status == "open"]),
-                "in_progress": len([t for t in tickets if t.status in ["in_progress", "pending"]]),
-                "resolved": len([t for t in tickets if t.status == "resolved"]),
-                "closed": len([t for t in tickets if t.status == "closed"]),
-                "cancelled": len([t for t in tickets if t.status == "cancelled"]),
+                "total": stats_result.total or 0,
+                "open": stats_result.open or 0,
+                "in_progress": stats_result.in_progress or 0,
+                "resolved": stats_result.resolved or 0,
+                "closed": stats_result.closed or 0,
+                "cancelled": stats_result.cancelled or 0,
             }
 
             # 3. 最近工单摘要（最近3个）
@@ -74,11 +76,13 @@ class UserProfileManager:
                 for t in recent_tickets
             ]
 
-            # 4. 最近活跃工单（如果有）
-            active_tickets = [t for t in tickets if t.status in ["open", "pending", "in_progress"]]
-            if active_tickets:
-                # 找最新的活跃工单
-                latest_active = max(active_tickets, key=lambda x: x.created_at or 0)
+            # 4. 最近活跃工单（如果有）- 单独查询，避免加载全部工单
+            latest_active = db.query(Ticket).filter(
+                Ticket.customer_id == user_id,
+                Ticket.status.in_(["open", "pending", "in_progress"])
+            ).order_by(Ticket.created_at.desc()).first()
+
+            if latest_active:
                 profile["active_ticket"] = {
                     "ticket_no": latest_active.ticket_no,
                     "title": latest_active.title,
@@ -106,9 +110,6 @@ class UserProfileManager:
         except Exception as e:
             logger.error("获取用户画像失败: %s", e)
             return {}
-        finally:
-            if should_close_db:
-                db.close()
 
     @staticmethod
     def build_profile_prompt(profile: Dict[str, Any]) -> str:
@@ -165,22 +166,17 @@ class UserProfileManager:
         return "\n".join(lines)
 
     @staticmethod
-    def get_recent_ticket_context(user_id: int, db: Optional[Session] = None) -> str:
+    def get_recent_ticket_context(user_id: str, db: Session) -> str:
         """
         获取用户最近工单的上下文（用于简短提示）
 
         Args:
             user_id: 用户ID
-            db: 数据库会话
+            db: 数据库会话（由调用方提供）
 
         Returns:
             上下文文本
         """
-        should_close_db = False
-        if db is None:
-            db = next(get_db())
-            should_close_db = True
-
         try:
             # 查询最近一个有消息的工单
             recent_ticket = db.query(Ticket).filter(
@@ -209,9 +205,6 @@ class UserProfileManager:
         except Exception as e:
             logger.error("获取工单上下文失败: %s", e)
             return ""
-        finally:
-            if should_close_db:
-                db.close()
 
 
 # 全局实例

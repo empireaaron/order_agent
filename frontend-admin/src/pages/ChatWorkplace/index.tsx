@@ -247,9 +247,24 @@ const ChatWorkplace: React.FC = () => {
       const acceptedSession = response.data.find((s: ChatSession) => s.id === sessionId)
       if (acceptedSession) {
         setActiveSession(acceptedSession)
+        // 本地立即清零未读数
+        setSessions(prev => prev.map(s =>
+          s.id === sessionId ? { ...s, unread_count: 0 } : s
+        ))
         // 加载消息
         const msgResponse = await api.get(`/chat-service/sessions/${sessionId}/messages`)
         setMessages(msgResponse.data.items || [])
+        // 标记该会话中的未读消息为已读
+        const unreadMessageIds = (msgResponse.data.items || [])
+          .filter((msg: ChatMessage) => !msg.is_read)
+          .map((msg: ChatMessage) => msg.id)
+        if (unreadMessageIds.length > 0) {
+          wsRef.current?.send(JSON.stringify({
+            type: 'read',
+            session_id: sessionId,
+            message_ids: unreadMessageIds
+          }))
+        }
       }
 
       fetchWaitingQueue()
@@ -262,6 +277,10 @@ const ChatWorkplace: React.FC = () => {
 
   const loadSessionMessages = async (session: ChatSession) => {
     setActiveSession(session)
+    // 本地立即清零未读数，让红点消失
+    setSessions(prev => prev.map(s =>
+      s.id === session.id ? { ...s, unread_count: 0 } : s
+    ))
     setLoading(true)
     const currentRequestId = ++requestIdRef.current
     try {
@@ -269,6 +288,19 @@ const ChatWorkplace: React.FC = () => {
       // 忽略过期请求的响应
       if (currentRequestId !== requestIdRef.current) return
       setMessages(response.data.items || [])
+
+      // 标记该会话中的未读消息为已读
+      const unreadMessageIds = (response.data.items || [])
+        .filter((msg: ChatMessage) => !msg.is_read)
+        .map((msg: ChatMessage) => msg.id)
+      if (unreadMessageIds.length > 0) {
+        wsRef.current?.send(JSON.stringify({
+          type: 'read',
+          session_id: session.id,
+          message_ids: unreadMessageIds
+        }))
+      }
+
       wsRef.current?.send(JSON.stringify({
         type: 'join_session',
         session_id: session.id,

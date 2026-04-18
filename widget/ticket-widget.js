@@ -128,6 +128,9 @@
               console.log('Token is invalid, clearing login state');
               this.clearLoginState();
             }
+          }).catch((err) => {
+            console.error('Token verify network error:', err);
+            this.clearLoginState();
           });
         }
       } catch (e) {
@@ -193,9 +196,13 @@
         this.state.chatWsHeartbeatInterval = null;
       }
 
-      localStorage.removeItem('widget_token');
-      localStorage.removeItem('widget_user_id');
-      localStorage.removeItem('widget_username');
+      try {
+        localStorage.removeItem('widget_token');
+        localStorage.removeItem('widget_user_id');
+        localStorage.removeItem('widget_username');
+      } catch (e) {
+        console.error('Failed to clear localStorage:', e);
+      }
       this.state.token = null;
       this.state.userId = null;
       this.state.isAuthenticated = false;
@@ -593,12 +600,14 @@
 
     toggleWindow() {
       const window = this.shadowRoot.getElementById('ticket-widget-window');
+      if (!window) return;
       window.classList.toggle('open');
       this.state.isOpen = window.classList.contains('open');
     },
 
     closeWindow() {
       const window = this.shadowRoot.getElementById('ticket-widget-window');
+      if (!window) return;
       window.classList.remove('open');
       this.state.isOpen = false;
     },
@@ -731,7 +740,11 @@
       this.showTyping();
 
       // 保存用户消息到数据库（AI聊天记录）
-      this.saveAIMessageToDatabase('customer', message);
+      try {
+        await this.saveAIMessageToDatabase('customer', message);
+      } catch (e) {
+        console.error('Failed to save AI message:', e);
+      }
 
       try {
         // 调用智能体API
@@ -768,6 +781,7 @@
 
     addMessage(content, type, senderName = null) {
       const body = this.shadowRoot.getElementById('ticket-widget-body');
+      if (!body) return;
       const messageDiv = document.createElement('div');
       messageDiv.className = `ticket-widget-message ${type}`;
 
@@ -1104,6 +1118,7 @@
           }
           const firstData = await firstResponse.json();
           const totalPages = this.calculateTotalPages(firstData.total, 10);
+          const maxInitPages = 10;
 
           console.log('Init load: total=', firstData.total, 'pages=', totalPages);
 
@@ -1115,27 +1130,33 @@
             return;
           }
 
-          // 有多页数据，加载所有页
-          const allMessages = [...firstData.items];
+          // 有多页数据，限制初始化最多加载最近 maxInitPages 页（避免内存与请求爆炸）
+          const allMessages = [];
+          const startPage = Math.max(1, totalPages - maxInitPages + 1);
 
-          // 加载剩余页
-          for (let p = 2; p <= totalPages; p++) {
-            console.log('Loading page', p, 'of', totalPages);
-            const resp = await this.apiRequest(
-              `${this.config.apiUrl}/chat-service/sessions/${sessionId}/messages?page=${p}&page_size=10&include_ai_history=${includeAIHistory}`
-            );
-            if (resp.ok) {
-              const data = await resp.json();
-              console.log('Page', p, 'loaded:', data.items?.length || 0, 'messages');
-              allMessages.push(...data.items);
+          for (let p = startPage; p <= totalPages; p++) {
+            let pageData;
+            if (p === 1) {
+              pageData = firstData;
             } else {
-              console.error('Failed to load page', p);
+              console.log('Loading page', p, 'of', totalPages);
+              const resp = await this.apiRequest(
+                `${this.config.apiUrl}/chat-service/sessions/${sessionId}/messages?page=${p}&page_size=10&include_ai_history=${includeAIHistory}`
+              );
+              if (resp.ok) {
+                pageData = await resp.json();
+                console.log('Page', p, 'loaded:', pageData.items?.length || 0, 'messages');
+              } else {
+                console.error('Failed to load page', p);
+                continue;
+              }
             }
+            allMessages.push(...(pageData.items || []));
           }
 
-          console.log('Loaded all messages:', allMessages.length, 'of', firstData.total);
-          this.state.chatHistoryPage = totalPages;
-          this.state.chatHistoryHasMore = false;
+          console.log('Loaded messages:', allMessages.length, 'of', firstData.total);
+          this.state.chatHistoryPage = startPage;
+          this.state.chatHistoryHasMore = startPage > 1;
           this.state.historyLoadedForSession = sessionId; // 标记已加载
           this.renderChatMessages(allMessages, 'init', sessionId);
           return;
@@ -1361,7 +1382,13 @@
         };
 
         this.state.ws.onmessage = (event) => {
-          const data = JSON.parse(event.data);
+          let data;
+          try {
+            data = JSON.parse(event.data);
+          } catch (e) {
+            console.error('Invalid WebSocket JSON:', event.data);
+            return;
+          }
           // 处理 pong 响应
           if (data.type === 'pong') {
             this.state.lastPongTime = Date.now();
@@ -1374,10 +1401,19 @@
           console.error('WebSocket error:', error);
         };
 
-        this.state.ws.onclose = () => {
-          console.log('WebSocket closed');
+        this.state.ws.onclose = (event) => {
+          console.log('WebSocket closed', event.code, event.reason);
           // 清理心跳
           this._stopHeartbeat();
+          // 认证失败（token 过期/无效）
+          if (event.code === 4001) {
+            console.warn('WebSocket authentication failed, logging out');
+            this.clearLoginState();
+            this.state.isAuthenticated = false;
+            this.createWidget();
+            this.attachEventListeners();
+            return;
+          }
           // 尝试重连
           setTimeout(() => this.connectWebSocket(), 5000);
         };
@@ -1423,9 +1459,13 @@
     },
 
     escapeHtml(text) {
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
+      if (typeof text !== 'string') return String(text);
+      return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
     },
 
     // 转人工服务
@@ -1578,7 +1618,13 @@
       };
 
       ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
+        let data;
+        try {
+          data = JSON.parse(event.data);
+        } catch (e) {
+          console.error('Invalid Chat WebSocket JSON:', event.data);
+          return;
+        }
         // 处理 pong 响应
         if (data.type === 'pong') {
           lastPongTime = Date.now();
@@ -1592,12 +1638,16 @@
         console.error('Chat WebSocket error:', error);
       };
 
-      ws.onclose = () => {
-        console.log('Chat WebSocket closed');
+      ws.onclose = (event) => {
+        console.log('Chat WebSocket closed', event.code, event.reason);
         // 清理心跳
         if (this.state.chatWsHeartbeatInterval) {
           clearInterval(this.state.chatWsHeartbeatInterval);
           this.state.chatWsHeartbeatInterval = null;
+        }
+        // 认证失败时不做重连，由主 WebSocket 的 onclose 统一处理登出
+        if (event.code === 4001) {
+          return;
         }
       };
     },

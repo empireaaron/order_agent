@@ -10,7 +10,7 @@ from pathlib import Path
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 
-from db.milvus import milvus_manager
+from db.milvus import get_milvus_manager
 from tools.minio_tools import download_file, get_presigned_url
 from config import settings
 
@@ -29,7 +29,6 @@ def extract_text_from_file(file_path: str, file_type: str) -> str:
         提取的文本内容
     """
     import tempfile
-    import os
 
     from langchain_community.document_loaders import (
         TextLoader,
@@ -181,8 +180,18 @@ def generate_embeddings(texts: List[str]) -> List[List[float]]:
             model="text-embedding-3-small"
         )
 
-    vectors = embeddings.embed_documents(texts)
-    return vectors
+    # 分批处理，避免单批次过大
+    batch_size = 100
+    all_vectors = []
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i + batch_size]
+        try:
+            batch_vectors = embeddings.embed_documents(batch)
+            all_vectors.extend(batch_vectors)
+        except Exception as e:
+            logger.error("Embedding generation failed for batch %s-%s: %s", i, i + len(batch), e)
+            raise RuntimeError(f"Failed to generate embeddings for batch {i}-{i + len(batch)}: {e}") from e
+    return all_vectors
 
 
 def process_document(doc_id: str, file_path: str, file_type: str, collection_name: str) -> Dict:
@@ -236,11 +245,17 @@ def process_document(doc_id: str, file_path: str, file_type: str, collection_nam
                 }
             })
 
-        # 5. 存入 Milvus
+        # 5. 分批存入 Milvus
         logger.info("Inserting into Milvus collection: %s", collection_name)
-        success = milvus_manager.insert(collection_name=collection_name, data=data)
+        batch_size = 100
+        insert_success = True
+        for i in range(0, len(data), batch_size):
+            batch = data[i:i + batch_size]
+            if not get_milvus_manager().insert(collection_name=collection_name, data=batch):
+                logger.warning("Failed to insert batch %s-%s into Milvus", i, i + len(batch))
+                insert_success = False
 
-        if success:
+        if insert_success:
             return {"success": True, "chunk_count": len(chunks), "error": None}
         else:
             return {"success": False, "chunk_count": 0, "error": "Failed to insert into Milvus"}

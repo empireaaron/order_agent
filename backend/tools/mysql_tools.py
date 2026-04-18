@@ -21,8 +21,8 @@ def create_ticket(
     customer_info: Dict = None
 ) -> Ticket:
     """创建工单"""
-    # 生成工单编号
-    ticket_no = f"TKT-{now().strftime('%Y%m%d%H%M%S')}"
+    # 生成工单编号（附加随机后缀避免高并发下秒级碰撞）
+    ticket_no = f"TKT-{now().strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:6].upper()}"
 
     ticket = Ticket(
         id=str(uuid4()),
@@ -134,8 +134,11 @@ def get_ticket_messages(
     ticket_id: str
 ) -> list[TicketMessage]:
     """获取工单的所有消息"""
+    from sqlalchemy.orm import joinedload
     from models import TicketMessage as TicketMessageModel
-    messages = db.query(TicketMessageModel).filter(
+    messages = db.query(TicketMessageModel).options(
+        joinedload(TicketMessageModel.sender)
+    ).filter(
         TicketMessageModel.ticket_id == ticket_id
     ).order_by(TicketMessageModel.created_at.asc()).all()
     return messages

@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     # WebSocket 配置
     WS_HEARTBEAT_INTERVAL: int = Field(default=30)  # 秒
 
+    # 数据库连接池
+    DB_POOL_SIZE: int = Field(default=10)
+    DB_MAX_OVERFLOW: int = Field(default=20)
+    DB_POOL_RECYCLE: int = Field(default=3600)
+
     # 文档处理
     CHUNK_SIZE: int = Field(default=500)
     CHUNK_OVERLAP: int = Field(default=50)

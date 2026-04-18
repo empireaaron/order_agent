@@ -5,9 +5,9 @@ import logging
 import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
-from db.milvus import milvus_manager
+from db.milvus import get_milvus_manager
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ def get_embedding_dimension() -> int:
     return 1536
 
 
-def generate_embedding(text: str) -> List[float]:
+def generate_embedding(text: str) -> Optional[List[float]]:
     """
     使用配置好的 embedding 模型生成文本向量
 
@@ -35,7 +35,7 @@ def generate_embedding(text: str) -> List[float]:
         text: 输入文本
 
     Returns:
-        向量列表
+        向量列表；失败时返回 None
     """
     from config import settings
     from openai import OpenAI
@@ -54,11 +54,11 @@ def generate_embedding(text: str) -> List[float]:
         return response.data[0].embedding
     except Exception as e:
         logger.error("生成 embedding 失败: %s", e)
-        # 失败时返回零向量（会导致搜索无结果，但不会报错）
-        return [0.0] * get_embedding_dimension()
+        # 失败时返回 None，避免零向量导致异常匹配
+        return None
 
 
-def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
+def generate_embeddings_batch(texts: List[str]) -> Optional[List[List[float]]]:
     """
     批量生成文本向量
 
@@ -66,7 +66,7 @@ def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
         texts: 输入文本列表
 
     Returns:
-        向量列表
+        向量列表；失败时返回 None
     """
     from config import settings
     from openai import OpenAI
@@ -90,9 +90,7 @@ def generate_embeddings_batch(texts: List[str]) -> List[List[float]]:
         return [e.embedding for e in embeddings]
     except Exception as e:
         logger.error("批量生成 embedding 失败: %s", e)
-        # 失败时全部返回零向量
-        dim = get_embedding_dimension()
-        return [[0.0] * dim for _ in texts]
+        return None
 
 
 def retrieve_from_knowledge_base(
@@ -117,7 +115,7 @@ def retrieve_from_knowledge_base(
     query_vector = generate_embedding(question)
     logger.debug("生成的查询向量维度: %s", len(query_vector))
 
-    results = milvus_manager.search(
+    results = get_milvus_manager().search(
         collection_name=collection_name,
         vector=query_vector,
         limit=top_k,
@@ -144,7 +142,7 @@ def create_knowledge_base_collection(kb_name: str) -> tuple[bool, str]:
     # 根据 embedding 模型确定维度
     dimension = get_embedding_dimension()
 
-    success = milvus_manager.create_collection(collection_name=collection_name, dimension=dimension)
+    success = get_milvus_manager().create_collection(collection_name=collection_name, dimension=dimension)
     return success, collection_name if success else ""
 
 
@@ -178,7 +176,7 @@ def insert_document_to_kb(
             }
         })
 
-    return milvus_manager.insert(collection_name=collection_name, data=data)
+    return get_milvus_manager().insert(collection_name=collection_name, data=data)
 
 
 def search_kb_with_vector(
@@ -201,7 +199,7 @@ def search_kb_with_vector(
     Returns:
         (检索到的上下文文本, 原始结果列表)
     """
-    results = milvus_manager.search(
+    results = get_milvus_manager().search(
         collection_name=collection_name,
         vector=query_vector,
         limit=top_k,
@@ -303,7 +301,7 @@ def search_kb_batch(
 
     def search_single(kb):
         try:
-            results = milvus_manager.search(
+            results = get_milvus_manager().search(
                 collection_name=kb.collection_name,
                 vector=query_vector,
                 limit=top_k,

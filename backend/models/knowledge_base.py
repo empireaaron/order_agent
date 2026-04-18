@@ -17,8 +17,8 @@ class KnowledgeBase(Base):
     id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid4()))
     name = Column(String(100), nullable=False, comment="知识库名称")
     description = Column(Text, nullable=True, comment="知识库描述")
-    collection_name = Column(String(100), nullable=False, comment="Milvus Collection 名称")
-    owner_id = Column(String(36), ForeignKey("users.id"), nullable=False, comment="所有者ID")
+    collection_name = Column(String(100), nullable=False, index=True, comment="Milvus Collection 名称")
+    owner_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True, comment="所有者ID")
     document_count = Column(Integer, default=0, comment="文档数量")
     status = Column(String(20), default="active", comment="状态: active, inactive, building")
     embedding_model = Column(String(100), default="sentence-transformers/all-MiniLM-L6-v2", comment="嵌入模型")
@@ -50,7 +50,7 @@ class Document(Base):
     __tablename__ = "documents"
 
     id = Column(String(36), primary_key=True, index=True, default=lambda: str(uuid4()))
-    knowledge_base_id = Column(String(36), ForeignKey("knowledge_bases.id"), nullable=False, comment="知识库ID")
+    knowledge_base_id = Column(String(36), ForeignKey("knowledge_bases.id"), nullable=False, index=True, comment="知识库ID")
     title = Column(String(255), nullable=False, comment="文档标题")
     original_filename = Column(String(255), nullable=False, comment="原始文件名")
     file_path = Column(String(500), nullable=True, comment="文件存储路径")

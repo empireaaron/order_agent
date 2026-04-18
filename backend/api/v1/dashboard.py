@@ -99,6 +99,25 @@ async def get_ticket_trends(
         raise HTTPException(status_code=403, detail="Permission denied")
 
     now_time = now()
+    start_date = (now_time - timedelta(days=days - 1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+
+    # 使用 GROUP BY 一次性聚合，避免 N+1 查询
+    created_stats = dict(db.query(
+        func.date(Ticket.created_at),
+        func.count(Ticket.id)
+    ).filter(
+        Ticket.created_at >= start_date
+    ).group_by(func.date(Ticket.created_at)).all())
+
+    resolved_stats = dict(db.query(
+        func.date(Ticket.resolved_at),
+        func.count(Ticket.id)
+    ).filter(
+        Ticket.resolved_at >= start_date
+    ).group_by(func.date(Ticket.resolved_at)).all())
+
     date_list = []
     created_list = []
     resolved_list = []
@@ -106,24 +125,11 @@ async def get_ticket_trends(
     for i in range(days - 1, -1, -1):
         date_obj = now_time - timedelta(days=i)
         day_start = date_obj.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_end = day_start + timedelta(days=1)
+        day_key = day_start.date()
 
-        date_str = day_start.strftime("%m-%d")
-        date_list.append(date_str)
-
-        # 该日创建的工单数
-        created_count = db.query(Ticket).filter(
-            Ticket.created_at >= day_start,
-            Ticket.created_at < day_end
-        ).count()
-        created_list.append(created_count)
-
-        # 该日解决的工单数
-        resolved_count = db.query(Ticket).filter(
-            Ticket.resolved_at >= day_start,
-            Ticket.resolved_at < day_end
-        ).count()
-        resolved_list.append(resolved_count)
+        date_list.append(day_start.strftime("%m-%d"))
+        created_list.append(created_stats.get(day_key, 0))
+        resolved_list.append(resolved_stats.get(day_key, 0))
 
     return {
         "dates": date_list,

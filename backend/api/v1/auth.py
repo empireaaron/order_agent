@@ -1,7 +1,9 @@
 """
 认证 API 路由
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+import time
+from collections import defaultdict
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
@@ -15,10 +17,28 @@ from utils.timezone import now
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
+# 基于内存的简单限流存储（生产环境建议使用 Redis）
+_rate_limit_store = defaultdict(list)
+
+
+def _check_rate_limit(key: str, max_requests: int = 5, window: int = 60) -> bool:
+    """检查是否超过限流阈值"""
+    now_ts = time.time()
+    window_start = now_ts - window
+    _rate_limit_store[key] = [ts for ts in _rate_limit_store[key] if ts > window_start]
+    if len(_rate_limit_store[key]) >= max_requests:
+        return False
+    _rate_limit_store[key].append(now_ts)
+    return True
+
 
 @router.post("/register", response_model=UserSchema)
-def register(user_create: UserCreate, db: Session = Depends(get_db)):
+def register(request: Request, user_create: UserCreate, db: Session = Depends(get_db)):
     """用户注册"""
+    client_ip = request.client.host if request.client else "unknown"
+    if not _check_rate_limit(f"register:{client_ip}", max_requests=5, window=60):
+        raise HTTPException(status_code=429, detail="Too many registration attempts")
+
     # 检查用户名是否已存在
     db_user = db.query(User).filter(User.username == user_create.username).first()
     if db_user:
@@ -29,19 +49,13 @@ def register(user_create: UserCreate, db: Session = Depends(get_db)):
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # 确定角色
-    if user_create.role_id:
-        role = db.query(Role).filter(Role.id == user_create.role_id).first()
-        if not role:
-            raise HTTPException(status_code=400, detail="Invalid role_id")
-    else:
-        # 使用默认 customer 角色
-        role = db.query(Role).filter(Role.code == "customer").first()
-        if not role:
-            role = Role(name="Customer", code="customer", description="普通客户")
-            db.add(role)
-            db.commit()
-            db.refresh(role)
+    # 注册接口强制使用 customer 角色，禁止用户自选角色
+    role = db.query(Role).filter(Role.code == "customer").first()
+    if not role:
+        role = Role(name="Customer", code="customer", description="普通客户")
+        db.add(role)
+        db.commit()
+        db.refresh(role)
 
     # 创建用户
     db_user = User(
@@ -63,8 +77,12 @@ def register(user_create: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+def login(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     """用户登录"""
+    client_ip = request.client.host if request.client else "unknown"
+    if not _check_rate_limit(f"login:{client_ip}", max_requests=5, window=60):
+        raise HTTPException(status_code=429, detail="Too many login attempts")
+
     db_user = db.query(User).filter(User.username == form_data.username).first()
     if not db_user or not verify_password(form_data.password, db_user.password_hash):
         raise HTTPException(
@@ -85,7 +103,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
 
 @router.post("/refresh")
-def refresh_token(refresh_token: str):
+def refresh_token(refresh_token: str, db: Session = Depends(get_db)):
     """刷新 token"""
     payload = decode_token(refresh_token)
     if payload is None:
@@ -95,8 +113,13 @@ def refresh_token(refresh_token: str):
     if user_id is None:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
-    # 创建新的 access token
-    access_token = create_access_token(data={"sub": user_id})
+    # 校验用户是否存在且有效
+    db_user = db.query(User).filter(User.id == user_id).first()
+    if not db_user or not db_user.is_active:
+        raise HTTPException(status_code=401, detail="User not found or inactive")
+
+    # 创建新的 access token（带上当前角色）
+    access_token = create_access_token(data={"sub": user_id, "role": db_user.role.code})
     return {"access_token": access_token, "token_type": "bearer"}
 
 

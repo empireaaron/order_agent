@@ -2,7 +2,6 @@
 Milvus 向量数据库连接和索引管理
 """
 import logging
-from pymilvus import MilvusClient, DataType
 
 from config import settings
 
@@ -21,6 +20,7 @@ class MilvusManager:
     def connect(self):
         """连接 Milvus"""
         try:
+            from pymilvus import MilvusClient
             self.client = MilvusClient(
                 uri=f"http://{self.host}:{self.port}",
                 db_name=self.db_name
@@ -43,6 +43,8 @@ class MilvusManager:
             collection_name: 集合名称
             dimension: 向量维度 (默认 384 for all-MiniLM-L6-v2)
         """
+        from pymilvus import DataType
+
         if not self.client:
             self.connect()
 
@@ -294,12 +296,20 @@ class MilvusManager:
             return False
 
 
-# 全局 Milvus 管理器实例
-milvus_manager = MilvusManager()
+_milvus_manager = None
+
+
+def get_milvus_manager():
+    """惰性获取全局 Milvus 管理器实例"""
+    global _milvus_manager
+    if _milvus_manager is None:
+        _milvus_manager = MilvusManager()
+    return _milvus_manager
 
 
 def get_milvus_client():
     """获取 Milvus 客户端"""
-    if not milvus_manager.client:
-        milvus_manager.connect()
-    return milvus_manager.client
+    manager = get_milvus_manager()
+    if not manager.client:
+        manager.connect()
+    return manager.client

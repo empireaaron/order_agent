@@ -3,24 +3,32 @@
 """
 import logging
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.orm import Session
 
 from db.session import get_db
 from auth.middleware import get_current_active_user, require_admin_role
 from models import User
-from agents.nodes import ticket_bot_graph
+from agents.nodes import get_ticket_bot_graph
 from agents.state import AgentState
-from memory.short_term import short_term_memory
+from memory.short_term import get_short_term_memory
 from memory.user_profile import user_profile_manager, UserProfileManager
+from api.v1.auth import _check_rate_limit
 
 logger = logging.getLogger(__name__)
+
+class ChatMessageRequest(BaseModel):
+    """AI 聊天消息请求"""
+    model_config = ConfigDict(extra="ignore")
+    message: str = Field(..., min_length=1, max_length=5000, description="用户输入的消息")
+
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
 @router.post("/")
 def chat_with_agent(
-    message: dict,
+    message: ChatMessageRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -39,7 +47,10 @@ def chat_with_agent(
         "ticket_info": {}  // 如果创建了工单
     }
     """
-    user_input = message.get("message", "").strip()
+    if not _check_rate_limit(f"chat_agent:{current_user.id}", max_requests=30, window=60):
+        raise HTTPException(status_code=429, detail="操作过于频繁，请稍后再试")
+
+    user_input = message.message.strip()
     if not user_input:
         raise HTTPException(status_code=400, detail="消息不能为空")
 
@@ -51,7 +62,7 @@ def chat_with_agent(
 
     # 2. 加载短期记忆（对话历史）
     user_id = str(current_user.id)
-    history_messages = short_term_memory.get_messages_as_lc(user_id, limit=10)
+    history_messages = get_short_term_memory().get_messages_as_lc(user_id, limit=10)
     logger.debug("用户 %s 历史对话: %s 条", user_id, len(history_messages))
 
     # 3. 构建初始状态，包含历史对话和用户画像
@@ -75,13 +86,13 @@ def chat_with_agent(
 
     try:
         # 3. 执行智能体图
-        result = ticket_bot_graph.invoke(initial_state)
+        result = get_ticket_bot_graph().invoke(initial_state)
 
         response_text = result.get("response", "处理完成")
 
         # 4. 保存对话到记忆（用户输入 + AI回复）
-        short_term_memory.add_message(user_id, "human", user_input)
-        short_term_memory.add_message(user_id, "ai", response_text)
+        get_short_term_memory().add_message(user_id, "human", user_input)
+        get_short_term_memory().add_message(user_id, "ai", response_text)
 
         return {
             "response": response_text,
@@ -90,17 +101,11 @@ def chat_with_agent(
             "error": result.get("error", "")
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"智能体处理失败: {str(e)}")
-
-
-@router.post("/stream")
-def chat_with_agent_stream(
-    message: dict,
-    current_user: User = Depends(get_current_active_user)
-):
-    """流式聊天接口（预留）"""
-    pass
+        logger.exception("智能体处理失败: %s", e)
+        raise HTTPException(status_code=500, detail="智能体处理失败，请稍后重试")
 
 
 @router.post("/clear-history")
@@ -109,7 +114,7 @@ def clear_chat_history(
 ):
     """清除当前用户的历史对话记录"""
     user_id = str(current_user.id)
-    short_term_memory.clear_memory(user_id)
+    get_short_term_memory().clear_memory(user_id)
     return {"message": "历史对话已清除"}
 
 
@@ -119,5 +124,5 @@ def clear_user_chat_history(
     current_user: User = Depends(require_admin_role)
 ):
     """管理员清除指定用户的历史对话记录"""
-    short_term_memory.clear_memory(user_id)
+    get_short_term_memory().clear_memory(user_id)
     return {"message": f"用户 {user_id} 的历史对话已清除"}

@@ -4,7 +4,7 @@
 from datetime import datetime
 from typing import Optional, List
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
 class RoleBase(BaseModel):
@@ -49,7 +49,7 @@ class UserCreate(BaseModel):
     role_id: Optional[int] = None
     is_active: bool = True
     is_verified: bool = False
-    password: str
+    password: str = Field(..., min_length=8)
 
 
 class UserUpdate(BaseModel):

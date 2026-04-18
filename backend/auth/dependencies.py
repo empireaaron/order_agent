@@ -2,19 +2,11 @@
 依赖注入函数
 """
 from fastapi import Depends, HTTPException, status
+from sqlalchemy.orm import Session
 
-from db.session import SessionLocal
+from db.session import get_db
 from auth.middleware import get_current_active_user, ROLE_ADMIN, ROLE_AGENT, ROLE_OPERATOR
 from models import User, Ticket, KnowledgeBase, Document
-
-
-def get_db_session():
-    """获取数据库会话（FastAPI 依赖注入兼容的生成器）"""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 async def get_current_user_dependency(
@@ -48,10 +40,10 @@ async def require_agent_dependency(
     return current_user
 
 
-async def get_ticket_by_id(
+def get_ticket_by_id(
     ticket_id: str,
     current_user: User = Depends(get_current_active_user),
-    db = Depends(get_db_session)
+    db: Session = Depends(get_db)
 ) -> Ticket:
     """获取工单（权限检查）"""
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
@@ -72,10 +64,10 @@ async def get_ticket_by_id(
     return ticket
 
 
-async def get_knowledge_base_by_id(
+def get_knowledge_base_by_id(
     kb_id: str,
     current_user: User = Depends(get_current_active_user),
-    db = Depends(get_db_session)
+    db: Session = Depends(get_db)
 ) -> KnowledgeBase:
     """获取知识库（权限检查）"""
     kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()

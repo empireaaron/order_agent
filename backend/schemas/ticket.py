@@ -4,13 +4,13 @@
 from datetime import datetime
 from typing import Optional, Dict, List
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class TicketBase(BaseModel):
     """工单基础模型"""
-    title: str
-    content: str
+    title: str = Field(..., min_length=1, max_length=200)
+    content: str = Field(..., min_length=1, max_length=5000)
     priority: str = "normal"
     category: str = "general"
     status: str = "open"
@@ -23,8 +23,10 @@ class TicketCreate(TicketBase):
 
 class TicketUpdate(BaseModel):
     """更新工单请求"""
-    title: Optional[str] = None
-    content: Optional[str] = None
+    model_config = ConfigDict(extra="ignore")
+
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    content: Optional[str] = Field(default=None, min_length=1, max_length=5000)
     priority: Optional[str] = None
     category: Optional[str] = None
     status: Optional[str] = None
@@ -34,13 +36,19 @@ class TicketUpdate(BaseModel):
 
 class TicketMessageBase(BaseModel):
     """工单消息基础模型"""
-    content: str
+    content: str = Field(..., min_length=1, max_length=3000)
     message_type: str = "text"
 
 
 class TicketMessageCreate(TicketMessageBase):
     """创建消息请求"""
     sender_type: str = "customer"
+
+
+class TicketStatusUpdate(BaseModel):
+    """工单状态更新请求"""
+    to_status: str = Field(..., min_length=1, max_length=30)
+    note: Optional[str] = Field(default=None, max_length=1000)
 
 
 class TicketMessage(TicketMessageBase):
