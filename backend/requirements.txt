@@ -1,4 +1,4 @@
-# FastAPI & Server
+# FastAPI & ASGI Server
 fastapi
 uvicorn[standard]
 python-multipart
@@ -9,7 +9,18 @@ sqlalchemy
 pymysql
 alembic
 
-# LangChain & LangGraph
+# Authentication & Security
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt
+python-dotenv
+
+# Pydantic & Validation
+pydantic
+pydantic-settings
+email-validator
+
+# AI / LLM / LangGraph
 langchain
 langchain-openai
 langchain-community
@@ -27,26 +38,20 @@ pymilvus
 
 # Embeddings (使用 HuggingFace 本地模型，无需 API)
 sentence-transformers
+# File Storage
+minio
 
 # Document Processing
 python-docx
 pypdf
 pdfplumber
 
-# Auth
-python-jose[cryptography]
-passlib[bcrypt]
-
-# Pydantic & Validation
-pydantic
-pydantic-settings
-
 # HTTP Client (LangChain 需要)
 httpx
 
 # Utils
 tenacity
-email-validator
 
+# Optional: distributed short-term memory (Redis backend)
 # Cache & Storage (Optional)
 redis  # 用于分布式对话记忆存储，可选依赖

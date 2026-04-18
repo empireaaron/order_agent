@@ -7,7 +7,7 @@
 TicketBot 是一个智能客服工单系统，包含三个主要组件：
 
 1. **后端** (`backend/`) - FastAPI + LangChain/LangGraph AI 智能体
-2. **前端管理后台** (`frontend-admin/`) - React + TypeScript + Ant Design，供客服/管理员使用
+2. **前端管理后台** (`frontend-admin/`) - React 18 + TypeScript + Vite + Ant Design 5 + Zustand + TanStack Query + Axios + Recharts + Tailwind CSS，供客服/管理员使用
 3. **嵌入式组件** (`widget/`) - Vanilla JS 聊天挂件，供网站客户使用
 
 ### AI 智能体工作流 (LangGraph)
@@ -67,10 +67,13 @@ WebSocket 双端点设计：
 - `backend/memory/` - 短期记忆存储（内存/Redis 双后端）
 - `backend/middleware/` - FastAPI 中间件（监控指标等）
 - `backend/utils/metrics.py` - 监控指标收集器
+- `backend/auth/middleware.py` - JWT 认证与角色权限中间件
+- `backend/api/v1/chat_service.py` - 实时客服聊天会话管理
 - `frontend-admin/src/stores/` - Zustand 状态管理
-- `frontend-admin/src/services/` - API 客户端
+- `frontend-admin/src/services/` - Axios API 客户端
 - `frontend-admin/src/pages/Metrics.tsx` - 系统监控页面
 - `frontend-admin/src/pages/SamplingAnnotation.tsx` - 抽样标注页面
+- `frontend-admin/src/pages/ChatWorkplace/index.tsx` - 客服聊天工作台
 - `widget/ticket-widget.js` - 可嵌入挂件（Shadow DOM 隔离样式）
 
 ## 常用命令
@@ -79,7 +82,7 @@ WebSocket 双端点设计：
 # 初始化数据库
 python manage.py init-db
 
-# 启动后端（manage.py 使用 8000 端口，直接使用 uvicorn 用 8001）
+# 启动后端（manage.py 与直接使用 uvicorn 均使用 8001 端口）
 python manage.py run-backend
 # 或：cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8001
 
@@ -111,7 +114,7 @@ docker-compose up -d
 
 ## 核心概念
 
-**多角色权限控制**：JWT Token 认证，角色包括管理员、客服、运营、普通用户。权限检查见 `backend/auth/dependencies.py` 中的 `require_role()`。
+**多角色权限控制**：JWT Token 认证，角色包括管理员、客服、运营、普通用户。权限检查见 `backend/auth/middleware.py` 中的 `require_role()` 与 `backend/auth/dependencies.py` 中的权限依赖函数。
 
 **知识库处理**：文档上传到 MinIO，解析分块后通过 OpenAI/DashScope 生成向量，存储在 Milvus 中用于语义检索。
 
@@ -119,7 +122,13 @@ docker-compose up -d
 
 **客服状态管理**：客服通过 `POST /api/v1/agent/online` 切换在线/离线状态，只有在线客服才会被分配新会话。
 
-**监控数据存储**：API 指标主要保存在内存中用于实时查询；意图识别、错误统计等会异步持久化到 MySQL 的 `*_metrics` 表中。
+**限流策略**：关键 API 已添加基于内存的限流保护（生产环境建议迁移至 Redis）。聊天类接口（`chat_with_agent`、`send_chat_message`、`save_ai_message`、`create_chat_session`）限流阈值 60 秒 30 次；工单类接口（`create_new_ticket`、`add_ticket_message_endpoint`）限流阈值 60 秒 10 次。
+
+**监控数据存储**：API 指标主要保存在内存中用于实时查询；意图识别、错误统计等会异步持久化到 MySQL 的 `*_metrics` 表中。读取类统计（`get_api_stats`、`get_intent_stats`、`get_error_stats`）通过 `ThreadPoolExecutor` 执行数据库查询，避免阻塞主线程。
+
+**数据库迁移**：使用 Alembic 管理数据库结构变更。现有迁移版本：`001`（全表 DateTime 时区升级）、`002`（`ticket_status_logs.created_at` 时区升级）。新增模型变更后需执行 `alembic revision --autogenerate -m "描述"` 生成迁移脚本，并运行 `alembic upgrade head` 同步到数据库。
+
+**会话管理规范**：`auth/dependencies.py` 已移除独立的 `get_db_session()`，统一使用 `db.session.get_db`。`memory/user_profile.py` 不再内部创建 Session，改由调用方（如 `chat.py`）传入 `db` 参数，由 FastAPI 依赖注入生命周期统一管理。
 
 ## VS Code 调试
 
