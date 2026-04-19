@@ -2,6 +2,9 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import api from '../services/api'
 
+// 全局跳转锁，防止 checkAuth 多次触发重复跳转
+let isRedirecting = false
+
 interface User {
   id: string
   username: string
@@ -102,8 +105,11 @@ export const useAuthStore = create<AuthState>()(
                 refreshToken: null,
                 isAuthenticated: false,
               })
-              // 跳转到登录页
-              window.location.href = '/login'
+              // 跳转到登录页（带锁防止重复刷新）
+              if (!isRedirecting) {
+                isRedirecting = true
+                window.location.href = '/login'
+              }
             })
         }
       },

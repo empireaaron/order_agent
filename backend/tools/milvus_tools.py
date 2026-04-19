@@ -1,6 +1,7 @@
 """
 Milvus 工具函数 - 知识库检索
 """
+import asyncio
 import logging
 import re
 import uuid
@@ -91,6 +92,32 @@ def generate_embeddings_batch(texts: List[str]) -> Optional[List[List[float]]]:
     except Exception as e:
         logger.error("批量生成 embedding 失败: %s", e)
         return None
+
+
+async def async_generate_embedding(text: str) -> Optional[List[float]]:
+    """
+    异步生成文本向量（使用 asyncio.to_thread 包装同步调用）
+
+    Args:
+        text: 输入文本
+
+    Returns:
+        向量列表；失败时返回 None
+    """
+    return await asyncio.to_thread(generate_embedding, text)
+
+
+async def async_generate_embeddings_batch(texts: List[str]) -> Optional[List[List[float]]]:
+    """
+    异步批量生成文本向量（使用 asyncio.to_thread 包装同步调用）
+
+    Args:
+        texts: 输入文本列表
+
+    Returns:
+        向量列表；失败时返回 None
+    """
+    return await asyncio.to_thread(generate_embeddings_batch, texts)
 
 
 def retrieve_from_knowledge_base(

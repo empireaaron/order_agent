@@ -284,8 +284,9 @@ def create_chat_session(
             "queue_position": queue_pos,
             "message": f"正在为您转接人工客服，当前排队位置：第{queue_pos}位"
         }
-    except Exception as e:
-        import traceback
+    except HTTPException:
+        raise
+    except Exception:
         logger.exception("Error creating chat session")
         raise HTTPException(status_code=500, detail="创建会话失败，请稍后重试")
 
@@ -468,7 +469,7 @@ def get_my_chat_sessions(
             ChatMessage.session_id == latest_times.c.session_id,
             ChatMessage.created_at == latest_times.c.latest_at
         )
-    ).all()
+    ).order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc()).all()
     last_message_map = {}
     for sid, content in latest_msgs:
         if sid not in last_message_map:

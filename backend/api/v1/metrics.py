@@ -2,6 +2,7 @@
 监控指标 API
 用于查看系统性能指标
 """
+import time
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Dict, Any, Optional, List
 from datetime import date, timedelta
@@ -14,6 +15,27 @@ from sqlalchemy.orm import Session
 from utils.metrics import metrics
 
 router = APIRouter(prefix="/metrics", tags=["Metrics"])
+
+# 简单的 TTL 内存缓存（30秒）
+_metrics_cache: Dict[str, tuple[Any, float]] = {}
+_METRICS_CACHE_TTL = 30
+
+
+def _get_metrics_cache(key: str) -> Any:
+    """获取缓存值，过期返回 None"""
+    entry = _metrics_cache.get(key)
+    if entry is None:
+        return None
+    value, timestamp = entry
+    if time.time() - timestamp > _METRICS_CACHE_TTL:
+        del _metrics_cache[key]
+        return None
+    return value
+
+
+def _set_metrics_cache(key: str, value: Any):
+    """设置缓存值"""
+    _metrics_cache[key] = (value, time.time())
 
 
 class AnnotationRequest(BaseModel):
@@ -115,6 +137,11 @@ async def get_intent_trend(
         query_end_date = date.today()
         period_days = 7
 
+    cache_key = f"intent_trend:{query_start_date}:{query_end_date}"
+    cached = _get_metrics_cache(cache_key)
+    if cached is not None:
+        return cached
+
     # 查询每日各意图的识别次数
     daily_stats = db.query(
         IntentMetrics.metric_date,
@@ -148,12 +175,14 @@ async def get_intent_trend(
             day_data[intent] = stat.total if stat else 0
         trend_data.append(day_data)
 
-    return {
+    result = {
         "period_days": period_days,
         "dates": dates,
         "intents": intent_types,
         "data": trend_data
     }
+    _set_metrics_cache(cache_key, result)
+    return result
 
 
 @router.post("/intent/feedback")
@@ -204,6 +233,11 @@ async def get_error_metrics(
         query_start_date = date.today() - timedelta(days=7)
         query_end_date = date.today()
 
+    cache_key = f"error_metrics:{query_start_date}:{query_end_date}"
+    cached = _get_metrics_cache(cache_key)
+    if cached is not None:
+        return cached
+
     # 从数据库查询错误统计
     results = db.query(
         ErrorMetrics.error_type,
@@ -219,6 +253,7 @@ async def get_error_metrics(
         key = f"{r.error_type}:{r.endpoint}" if r.endpoint else r.error_type
         errors[key] = r.total
 
+    _set_metrics_cache(cache_key, errors)
     return errors
 
 
@@ -380,6 +415,11 @@ async def get_intent_sample_stats(
         query_end_date = date.today()
         period_days = 7
 
+    cache_key = f"intent_sample_stats:{query_start_date}:{query_end_date}"
+    cached = _get_metrics_cache(cache_key)
+    if cached is not None:
+        return cached
+
     # 总体统计
     total_logs = db.query(IntentClassificationLog).filter(
         IntentClassificationLog.metric_date >= query_start_date,
@@ -415,7 +455,7 @@ async def get_intent_sample_stats(
         IntentClassificationLog.is_correct != None
     ).group_by(IntentClassificationLog.intent).all()
 
-    return {
+    result = {
         "period_days": period_days,
         "total_logs": total_logs,
         "sampled": sampled_logs,
@@ -431,3 +471,5 @@ async def get_intent_sample_stats(
             for stat in intent_stats
         }
     }
+    _set_metrics_cache(cache_key, result)
+    return result

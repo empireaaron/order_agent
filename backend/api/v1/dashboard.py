@@ -2,6 +2,7 @@
 仪表盘统计 API
 提供管理中心所需的各项业务统计数据
 """
+import time
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, and_, or_, desc
@@ -16,6 +17,27 @@ from utils.timezone import now
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
+# 简单的 TTL 内存缓存（60秒）
+_dashboard_cache: Dict[str, tuple[Any, float]] = {}
+_DASHBOARD_CACHE_TTL = 60
+
+
+def _get_dashboard_cache(key: str) -> Any:
+    """获取缓存值，过期返回 None"""
+    entry = _dashboard_cache.get(key)
+    if entry is None:
+        return None
+    value, timestamp = entry
+    if time.time() - timestamp > _DASHBOARD_CACHE_TTL:
+        del _dashboard_cache[key]
+        return None
+    return value
+
+
+def _set_dashboard_cache(key: str, value: Any):
+    """设置缓存值"""
+    _dashboard_cache[key] = (value, time.time())
+
 
 @router.get("/stats")
 async def get_dashboard_stats(
@@ -28,6 +50,10 @@ async def get_dashboard_stats(
     # 检查权限（仅管理员和客服可访问）
     if current_user.role.code not in [ROLE_ADMIN, ROLE_AGENT]:
         raise HTTPException(status_code=403, detail="Permission denied")
+
+    cached = _get_dashboard_cache("stats")
+    if cached is not None:
+        return cached
 
     now_time = now()
     today_start = now_time.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -69,7 +95,7 @@ async def get_dashboard_stats(
         ChatSession.status == "waiting"
     ).count()
 
-    return {
+    result = {
         "tickets": {
             "pending": pending_tickets,
             "today": today_tickets,
@@ -84,6 +110,8 @@ async def get_dashboard_stats(
             "waiting": waiting_sessions
         }
     }
+    _set_dashboard_cache("stats", result)
+    return result
 
 
 @router.get("/ticket-trends")
@@ -97,6 +125,11 @@ async def get_ticket_trends(
     """
     if current_user.role.code not in [ROLE_ADMIN, ROLE_AGENT]:
         raise HTTPException(status_code=403, detail="Permission denied")
+
+    cache_key = f"ticket_trends:{days}"
+    cached = _get_dashboard_cache(cache_key)
+    if cached is not None:
+        return cached
 
     now_time = now()
     start_date = (now_time - timedelta(days=days - 1)).replace(
@@ -131,11 +164,13 @@ async def get_ticket_trends(
         created_list.append(created_stats.get(day_key, 0))
         resolved_list.append(resolved_stats.get(day_key, 0))
 
-    return {
+    result = {
         "dates": date_list,
         "created": created_list,
         "resolved": resolved_list
     }
+    _set_dashboard_cache(cache_key, result)
+    return result
 
 
 @router.get("/ticket-categories")
@@ -148,6 +183,10 @@ async def get_ticket_categories(
     """
     if current_user.role.code not in [ROLE_ADMIN, ROLE_AGENT]:
         raise HTTPException(status_code=403, detail="Permission denied")
+
+    cached = _get_dashboard_cache("ticket_categories")
+    if cached is not None:
+        return cached
 
     # 按分类统计工单数量
     category_stats = db.query(
@@ -172,6 +211,7 @@ async def get_ticket_categories(
             "count": count
         })
 
+    _set_dashboard_cache("ticket_categories", result)
     return result
 
 
@@ -185,6 +225,10 @@ async def get_ticket_priority_stats(
     """
     if current_user.role.code not in [ROLE_ADMIN, ROLE_AGENT]:
         raise HTTPException(status_code=403, detail="Permission denied")
+
+    cached = _get_dashboard_cache("ticket_priority")
+    if cached is not None:
+        return cached
 
     # 按优先级统计工单数量
     priority_stats = db.query(
@@ -213,6 +257,7 @@ async def get_ticket_priority_stats(
             "count": count
         })
 
+    _set_dashboard_cache("ticket_priority", result)
     return result
 
 
@@ -225,6 +270,11 @@ async def get_agent_performance(
     """
     获取客服绩效统计（仅管理员）
     """
+    cache_key = f"agent_performance:{days}"
+    cached = _get_dashboard_cache(cache_key)
+    if cached is not None:
+        return cached
+
     now_time = now()
     start_date = now_time - timedelta(days=days)
 
@@ -272,6 +322,7 @@ async def get_agent_performance(
     # 按解决数排序
     result.sort(key=lambda x: x["resolved"], reverse=True)
 
+    _set_dashboard_cache(cache_key, result)
     return result
 
 

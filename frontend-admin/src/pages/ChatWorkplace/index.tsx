@@ -129,6 +129,7 @@ const ChatWorkplace: React.FC = () => {
 
     ws.onclose = () => {
       console.log('Chat WebSocket closed')
+      wsRef.current = null
     }
 
     return () => {
@@ -140,6 +141,11 @@ const ChatWorkplace: React.FC = () => {
         clearTimeout(timeoutRef.current)
         timeoutRef.current = null
       }
+      // 移除事件监听并关闭连接，避免闭包泄漏
+      ws.onopen = null
+      ws.onmessage = null
+      ws.onerror = null
+      ws.onclose = null
       ws.close()
       wsRef.current = null
     }

@@ -80,6 +80,7 @@ class ChatMessage(Base):
         Index('ix_chat_messages_sender_id', 'sender_id'),
         Index('ix_chat_messages_customer_id', 'customer_id'),
         Index('ix_chat_messages_sender_type', 'sender_type'),
+        Index('ix_chat_messages_customer_session_created', 'customer_id', 'session_id', 'created_at'),
     )
 
 

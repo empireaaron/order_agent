@@ -25,6 +25,7 @@
       showBubble: true,
       position: 'bottom-right',
       title: '在线客服',
+      debug: false,
       welcomeMessage: '您好！我是AI智能客服助手 🤖\n\n我可以帮您：\n• 📋 创建工单 - 描述遇到的问题\n• 🔍 查询工单 - 了解处理进度\n• 💡 解答问题 - 基于知识库回答\n• 👨‍💼 转人工 - 需要人工帮助时点击右上角\n\n请直接输入您的问题~'
     },
 
@@ -52,6 +53,17 @@
       aiHistoryPage: 1,
       aiHistoryHasMore: false,
       isLoadingAIHistory: false
+    },
+
+    // 调试日志方法（仅在 debug 模式输出）
+    log(...args) {
+      if (this.config.debug) this.log(...args);
+    },
+    warn(...args) {
+      if (this.config.debug) this.warn(...args);
+    },
+    error(...args) {
+      if (this.config.debug) this.error(...args);
     },
 
     init(userConfig) {
@@ -103,7 +115,7 @@
         const username = localStorage.getItem('widget_username');
 
         if (token && userId) {
-          console.log('Restoring login state from localStorage');
+          this.log('Restoring login state from localStorage');
           this.state.token = token;
           this.state.userId = userId;
           this.state.isAuthenticated = true;
@@ -111,7 +123,7 @@
           // 验证 token 是否有效
           this.verifyToken(token).then(async (isValid) => {
             if (isValid) {
-              console.log('Token is valid, re-rendering widget');
+              this.log('Token is valid, re-rendering widget');
               // 重新创建 widget 以显示登录后的界面
               this.createWidget();
               this.attachEventListeners();
@@ -125,16 +137,16 @@
                 }
               }, 500);
             } else {
-              console.log('Token is invalid, clearing login state');
+              this.log('Token is invalid, clearing login state');
               this.clearLoginState();
             }
           }).catch((err) => {
-            console.error('Token verify network error:', err);
+            this.error('Token verify network error:', err);
             this.clearLoginState();
           });
         }
       } catch (e) {
-        console.error('Failed to restore login state:', e);
+        this.error('Failed to restore login state:', e);
       }
     },
 
@@ -148,7 +160,7 @@
         });
         return response.ok;
       } catch (error) {
-        console.error('Token verification failed:', error);
+        this.error('Token verification failed:', error);
         return false;
       }
     },
@@ -165,7 +177,7 @@
 
       // 处理 token 过期
       if (response.status === 401) {
-        console.error('Token expired, clearing login state');
+        this.error('Token expired, clearing login state');
         this.clearLoginState();
         this.state.isAuthenticated = false;
         this.createWidget(); // 重新渲染登录界面
@@ -201,7 +213,7 @@
         localStorage.removeItem('widget_user_id');
         localStorage.removeItem('widget_username');
       } catch (e) {
-        console.error('Failed to clear localStorage:', e);
+        this.error('Failed to clear localStorage:', e);
       }
       this.state.token = null;
       this.state.userId = null;
@@ -657,7 +669,7 @@
         localStorage.setItem('widget_token', data.access_token);
         localStorage.setItem('widget_user_id', this.state.userId || '');
         localStorage.setItem('widget_username', displayName);
-        console.log('Login state saved to localStorage');
+        this.log('Login state saved to localStorage');
 
         // 重新渲染窗口
         this.refreshWindow();
@@ -682,6 +694,7 @@
       const footer = this.shadowRoot.getElementById('ticket-widget-footer');
       const transferBtn = this.shadowRoot.getElementById('ticket-widget-transfer');
 
+      this.removeScrollListeners();
       body.innerHTML = `
         <div class="ticket-widget-message agent">
           <div class="ticket-widget-message-content">${this.config.welcomeMessage.replace(/\n/g, '<br>')}</div>
@@ -743,7 +756,7 @@
       try {
         await this.saveAIMessageToDatabase('customer', message);
       } catch (e) {
-        console.error('Failed to save AI message:', e);
+        this.error('Failed to save AI message:', e);
       }
 
       try {
@@ -775,7 +788,7 @@
         } else {
           this.addMessage('抱歉，服务暂时不可用，请稍后重试。', 'agent');
         }
-        console.error('Chat error:', error);
+        this.error('Chat error:', error);
       }
     },
 
@@ -784,9 +797,6 @@
       if (!body) return;
       const messageDiv = document.createElement('div');
       messageDiv.className = `ticket-widget-message ${type}`;
-
-      // 转义HTML (保留换行符，使用white-space: pre-wrap显示)
-      const formattedContent = this.escapeHtml(content);
 
       // 获取当前时间 (统一格式)
       const now = new Date();
@@ -800,18 +810,38 @@
       const timeStr = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${milliseconds}`;
 
       // 如果有发送者名称且不是用户自己，显示发送者
-      let senderHtml = '';
       if (senderName && type !== 'user') {
-        senderHtml = `<div class="ticket-widget-sender"><span>${this.escapeHtml(senderName)}</span><span class="ticket-widget-time">${timeStr}</span></div>`;
+        const senderDiv = document.createElement('div');
+        senderDiv.className = 'ticket-widget-sender';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = senderName;
+
+        const timeSpan = document.createElement('span');
+        timeSpan.className = 'ticket-widget-time';
+        timeSpan.textContent = timeStr;
+
+        senderDiv.appendChild(nameSpan);
+        senderDiv.appendChild(timeSpan);
+        messageDiv.appendChild(senderDiv);
       } else if (type === 'user') {
-        // 用户消息只显示时间（右侧）
-        senderHtml = `<div class="ticket-widget-sender"><span class="ticket-widget-time">${timeStr}</span></div>`;
+        const senderDiv = document.createElement('div');
+        senderDiv.className = 'ticket-widget-sender';
+
+        const timeSpan = document.createElement('span');
+        timeSpan.className = 'ticket-widget-time';
+        timeSpan.textContent = timeStr;
+
+        senderDiv.appendChild(timeSpan);
+        messageDiv.appendChild(senderDiv);
       }
 
-      messageDiv.innerHTML = `
-        ${senderHtml}
-        <div class="ticket-widget-message-content">${formattedContent}</div>
-      `;
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'ticket-widget-message-content';
+      contentDiv.textContent = content;
+      contentDiv.style.whiteSpace = 'pre-wrap';
+      messageDiv.appendChild(contentDiv);
+
       body.appendChild(messageDiv);
       body.scrollTop = body.scrollHeight;
 
@@ -823,7 +853,7 @@
           content: content,
           timestamp: Date.now()
         });
-        console.log('Saved user message to state, total messages:', this.state.messages.length);
+        this.log('Saved user message to state, total messages:', this.state.messages.length);
         // 限制存储的消息数量，最多保留最近50条
         if (this.state.messages.length > 50) {
           this.state.messages = this.state.messages.slice(-50);
@@ -835,13 +865,13 @@
           content: content,
           timestamp: Date.now()
         });
-        console.log('Saved AI message to state, total messages:', this.state.messages.length);
+        this.log('Saved AI message to state, total messages:', this.state.messages.length);
         // 限制存储的消息数量，最多保留最近50条
         if (this.state.messages.length > 50) {
           this.state.messages = this.state.messages.slice(-50);
         }
       }
-      console.log('Current chatMode:', this.state.chatMode, 'message type:', type);
+      this.log('Current chatMode:', this.state.chatMode, 'message type:', type);
     },
 
     // 保存AI消息到数据库
@@ -859,10 +889,10 @@
           })
         });
         if (response.ok) {
-          console.log('Saved AI message to database:', role);
+          this.log('Saved AI message to database:', role);
         }
       } catch (error) {
-        console.error('Failed to save AI message:', error);
+        this.error('Failed to save AI message:', error);
       }
     },
 
@@ -870,36 +900,36 @@
     async loadAIMessagesFromDatabase(page = 1) {
       try {
         if (!this.state.token) {
-          console.log('No token, skipping load AI messages');
+          this.log('No token, skipping load AI messages');
           return { items: [], total: 0, has_more: false };
         }
-        console.log('Loading AI messages from database, page:', page);
+        this.log('Loading AI messages from database, page:', page);
         const response = await this.apiRequest(
           `${this.config.apiUrl}/chat-service/ai-messages?page=${page}&page_size=10`
         );
-        console.log('AI messages API response:', response.status);
+        this.log('AI messages API response:', response.status);
         if (response.ok) {
           const data = await response.json();
-          console.log('Loaded AI messages from database:', data.items?.length || 0, 'messages, total:', data.total);
+          this.log('Loaded AI messages from database:', data.items?.length || 0, 'messages, total:', data.total);
           return data;
         } else {
-          console.error('Failed to load AI messages:', response.status);
+          this.error('Failed to load AI messages:', response.status);
         }
       } catch (error) {
-        console.error('Failed to load AI messages:', error);
+        this.error('Failed to load AI messages:', error);
       }
       return { items: [], total: 0, has_more: false };
     },
 
     // 加载并显示AI聊天记录（分页加载）
     async loadAndDisplayAIMessages() {
-      console.log('loadAndDisplayAIMessages called');
+      this.log('loadAndDisplayAIMessages called');
 
       // 检查 body 元素是否存在
       const body = this.shadowRoot.getElementById('ticket-widget-body');
-      console.log('Body element:', body);
+      this.log('Body element:', body);
       if (!body) {
-        console.error('Body element not found, delaying...');
+        this.error('Body element not found, delaying...');
         setTimeout(() => this.loadAndDisplayAIMessages(), 500);
         return;
       }
@@ -907,13 +937,15 @@
       // 先获取第一页以获取总数
       const firstData = await this.loadAIMessagesFromDatabase(1);
       if (!firstData.items || firstData.items.length === 0) {
-        console.log('No AI messages to display');
+        this.log('No AI messages to display');
         return;
       }
 
       const totalPages = Math.ceil(firstData.total / 10);
-      console.log('Total pages:', totalPages, 'total messages:', firstData.total);
+      this.log('Total pages:', totalPages, 'total messages:', firstData.total);
 
+      // 清空欢迎消息前先移除旧监听器，避免内存泄漏
+      this.removeScrollListeners();
       // 清空欢迎消息
       body.innerHTML = '';
       this.state.messages = [];
@@ -954,7 +986,7 @@
           timestamp: new Date(msg.created_at).getTime()
         });
       });
-      console.log('Rendered', messages.length, 'AI messages');
+      this.log('Rendered', messages.length, 'AI messages');
     },
 
     // 添加AI历史消息滚动监听
@@ -962,7 +994,9 @@
       if (body._aiScrollListenerAttached) return;
       body._aiScrollListenerAttached = true;
 
-      body.addEventListener('scroll', async () => {
+      // 保存handler引用，以便切换模式时移除
+      this._aiScrollBody = body;
+      this._aiScrollHandler = async () => {
         // 当滚动到顶部且还有更多历史记录时
         if (body.scrollTop < 50 && this.state.aiHistoryHasMore && !this.state.isLoadingAIHistory) {
           const nextPage = this.state.aiHistoryPage - 1;
@@ -1012,7 +1046,9 @@
             this.state.isLoadingAIHistory = false;
           }
         }
-      });
+      };
+
+      body.addEventListener('scroll', this._aiScrollHandler);
     },
 
     // 仅显示消息（不保存到数据库）
@@ -1021,27 +1057,45 @@
       const messageDiv = document.createElement('div');
       messageDiv.className = `ticket-widget-message ${type}`;
 
-      // 转义HTML (保留换行符，使用white-space: pre-wrap显示)
-      const formattedContent = this.escapeHtml(content);
-
       // 获取时间
       const timeStr = createdAt
         ? this.formatMessageTime(createdAt)
         : this.formatMessageTime(new Date().toISOString());
 
-      let senderHtml = '';
       if (senderName && type !== 'user') {
-        senderHtml = `<div class="ticket-widget-sender"><span>${this.escapeHtml(senderName)}</span><span class="ticket-widget-time">${timeStr}</span></div>`;
+        const senderDiv = document.createElement('div');
+        senderDiv.className = 'ticket-widget-sender';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = senderName;
+
+        const timeSpan = document.createElement('span');
+        timeSpan.className = 'ticket-widget-time';
+        timeSpan.textContent = timeStr;
+
+        senderDiv.appendChild(nameSpan);
+        senderDiv.appendChild(timeSpan);
+        messageDiv.appendChild(senderDiv);
       } else if (type === 'user') {
-        // 用户消息只显示时间（右侧）
-        senderHtml = `<div class="ticket-widget-sender"><span class="ticket-widget-time">${timeStr}</span></div>`;
+        const senderDiv = document.createElement('div');
+        senderDiv.className = 'ticket-widget-sender';
+
+        const timeSpan = document.createElement('span');
+        timeSpan.className = 'ticket-widget-time';
+        timeSpan.textContent = timeStr;
+
+        senderDiv.appendChild(timeSpan);
+        messageDiv.appendChild(senderDiv);
       }
 
-      messageDiv.innerHTML = `
-        ${senderHtml}
-        <div class="ticket-widget-message-content">${formattedContent}</div>
-      `;
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'ticket-widget-message-content';
+      contentDiv.textContent = content;
+      contentDiv.style.whiteSpace = 'pre-wrap';
+      messageDiv.appendChild(contentDiv);
+
       body.appendChild(messageDiv);
+      body.scrollTop = body.scrollHeight;
     },
 
     // 显示/隐藏历史消息加载提示
@@ -1087,17 +1141,17 @@
     // mode: 'init' - 首次加载（从最后一页开始），'older' - 加载更早的消息，'newer' - 加载更新的消息
     // includeAIHistory: 是否包含AI聊天历史，默认true。在已显示AI消息的情况下设置为false
     async loadChatHistory(sessionId, mode = 'init', page = null, includeAIHistory = true) {
-      console.log('loadChatHistory called:', 'sessionId=', sessionId, 'mode=', mode, 'page=', page, 'includeAI=', includeAIHistory);
+      this.log('loadChatHistory called:', 'sessionId=', sessionId, 'mode=', mode, 'page=', page, 'includeAI=', includeAIHistory);
 
       // 防止重复加载
       if (this.state.isLoadingHistory) {
-        console.log('Already loading history, skipping');
+        this.log('Already loading history, skipping');
         return;
       }
 
       // 防止同一会话重复加载历史（init模式下且包含AI历史时）
       if (mode === 'init' && includeAIHistory && this.state.historyLoadedForSession === sessionId) {
-        console.log('History already loaded for session', sessionId, ', skipping');
+        this.log('History already loaded for session', sessionId, ', skipping');
         return;
       }
 
@@ -1113,14 +1167,14 @@
             `${this.config.apiUrl}/chat-service/sessions/${sessionId}/messages?page=1&page_size=10&include_ai_history=${includeAIHistory}`
           );
           if (!firstResponse.ok) {
-            console.error('Failed to load chat history:', firstResponse.status);
+            this.error('Failed to load chat history:', firstResponse.status);
             return;
           }
           const firstData = await firstResponse.json();
           const totalPages = this.calculateTotalPages(firstData.total, 10);
           const maxInitPages = 10;
 
-          console.log('Init load: total=', firstData.total, 'pages=', totalPages);
+          this.log('Init load: total=', firstData.total, 'pages=', totalPages);
 
           // 如果只有一页，直接渲染
           if (totalPages <= 1) {
@@ -1139,22 +1193,22 @@
             if (p === 1) {
               pageData = firstData;
             } else {
-              console.log('Loading page', p, 'of', totalPages);
+              this.log('Loading page', p, 'of', totalPages);
               const resp = await this.apiRequest(
                 `${this.config.apiUrl}/chat-service/sessions/${sessionId}/messages?page=${p}&page_size=10&include_ai_history=${includeAIHistory}`
               );
               if (resp.ok) {
                 pageData = await resp.json();
-                console.log('Page', p, 'loaded:', pageData.items?.length || 0, 'messages');
+                this.log('Page', p, 'loaded:', pageData.items?.length || 0, 'messages');
               } else {
-                console.error('Failed to load page', p);
+                this.error('Failed to load page', p);
                 continue;
               }
             }
             allMessages.push(...(pageData.items || []));
           }
 
-          console.log('Loaded messages:', allMessages.length, 'of', firstData.total);
+          this.log('Loaded messages:', allMessages.length, 'of', firstData.total);
           this.state.chatHistoryPage = startPage;
           this.state.chatHistoryHasMore = startPage > 1;
           this.state.historyLoadedForSession = sessionId; // 标记已加载
@@ -1167,19 +1221,19 @@
           this.showHistoryLoadingIndicator(true);
         }
 
-        console.log('Loading chat history for session:', sessionId, 'page:', targetPage, 'mode:', mode);
+        this.log('Loading chat history for session:', sessionId, 'page:', targetPage, 'mode:', mode);
 
         const response = await this.apiRequest(
           `${this.config.apiUrl}/chat-service/sessions/${sessionId}/messages?page=${targetPage}&page_size=10&include_ai_history=${includeAIHistory}`
         );
 
         if (!response.ok) {
-          console.error('Failed to load chat history:', response.status);
+          this.error('Failed to load chat history:', response.status);
           return;
         }
 
         const data = await response.json();
-        console.log('Loaded chat history:', data);
+        this.log('Loaded chat history:', data);
 
         // 更新分页状态
         this.state.chatHistoryPage = targetPage;
@@ -1187,7 +1241,7 @@
 
         this.renderChatMessages(data.items, mode, sessionId);
       } catch (error) {
-        console.error('Error loading chat history:', error);
+        this.error('Error loading chat history:', error);
       } finally {
         this.state.isLoadingHistory = false;
         // 隐藏加载提示
@@ -1217,23 +1271,23 @@
     // | agent       | 有值      | 客服(名) |
     // | system      | NULL/有值 | 系统     |
     renderChatMessages(messages, mode, sessionId) {
-      console.log('renderChatMessages called:', messages.length, 'messages, mode:', mode);
+      this.log('renderChatMessages called:', messages.length, 'messages, mode:', mode);
 
       if (!messages || messages.length === 0) {
-        console.log('No messages to render');
+        this.log('No messages to render');
         return;
       }
 
       const body = this.shadowRoot.getElementById('ticket-widget-body');
-      console.log('Body element found:', !!body);
+      this.log('Body element found:', !!body);
 
       // 记录当前滚动高度（用于加载更早历史时保持滚动位置）
       const oldScrollHeight = body.scrollHeight;
       const oldScrollTop = body.scrollTop;
 
-      // 如果是初始化模式，清空整个消息区域
-      // 因为现在是一次性加载所有消息（AI+客服），不需要保留任何现有消息
+      // 如果是初始化模式，清空整个消息区域前先移除旧监听器
       if (mode === 'init') {
+        this.removeScrollListeners();
         body.innerHTML = '';
       }
 
@@ -1316,7 +1370,9 @@
     attachHistoryScrollListener(body, sessionId) {
       body._hasScrollListener = true;
 
-      body.addEventListener('scroll', () => {
+      // 保存handler引用，以便切换模式时移除
+      this._historyScrollBody = body;
+      this._historyScrollHandler = () => {
         // 当滚动到顶部且还有更多历史记录时，加载更早的消息（上一页）
         if (body.scrollTop < 50 && this.state.chatHistoryHasMore && !this.state.isLoadingHistory) {
           const nextPage = this.state.chatHistoryPage - 1;
@@ -1324,9 +1380,26 @@
             this.loadChatHistory(sessionId, 'older', nextPage);
           }
         }
-      });
+      };
 
-      console.log('Attached scroll listener for history loading');
+      body.addEventListener('scroll', this._historyScrollHandler);
+      this.log('Attached scroll listener for history loading');
+    },
+
+    // 移除滚动监听器（切换模式时调用）
+    removeScrollListeners() {
+      if (this._aiScrollBody && this._aiScrollHandler) {
+        this._aiScrollBody.removeEventListener('scroll', this._aiScrollHandler);
+        this._aiScrollBody._aiScrollListenerAttached = false;
+        this._aiScrollBody = null;
+        this._aiScrollHandler = null;
+      }
+      if (this._historyScrollBody && this._historyScrollHandler) {
+        this._historyScrollBody.removeEventListener('scroll', this._historyScrollHandler);
+        this._historyScrollBody._hasScrollListener = false;
+        this._historyScrollBody = null;
+        this._historyScrollHandler = null;
+      }
     },
 
     showTyping() {
@@ -1355,8 +1428,14 @@
 
       // 如果已有连接且处于 OPEN 或 CONNECTING 状态，不再重复连接
       if (this.state.ws && (this.state.ws.readyState === WebSocket.OPEN || this.state.ws.readyState === WebSocket.CONNECTING)) {
-        console.log('WebSocket already connected or connecting, skipping');
+        this.log('WebSocket already connected or connecting, skipping');
         return;
+      }
+
+      // 清理已有的重连定时器，避免堆积
+      if (this.state.wsReconnectTimer) {
+        clearTimeout(this.state.wsReconnectTimer);
+        this.state.wsReconnectTimer = null;
       }
 
       // 清理已有的心跳定时器
@@ -1376,7 +1455,7 @@
         this.state.lastPongTime = Date.now();
 
         this.state.ws.onopen = () => {
-          console.log('WebSocket connected');
+          this.log('WebSocket connected');
           // 启动心跳
           this._startHeartbeat();
         };
@@ -1386,7 +1465,7 @@
           try {
             data = JSON.parse(event.data);
           } catch (e) {
-            console.error('Invalid WebSocket JSON:', event.data);
+            this.error('Invalid WebSocket JSON:', event.data);
             return;
           }
           // 处理 pong 响应
@@ -1398,16 +1477,16 @@
         };
 
         this.state.ws.onerror = (error) => {
-          console.error('WebSocket error:', error);
+          this.error('WebSocket error:', error);
         };
 
         this.state.ws.onclose = (event) => {
-          console.log('WebSocket closed', event.code, event.reason);
+          this.log('WebSocket closed', event.code, event.reason);
           // 清理心跳
           this._stopHeartbeat();
           // 认证失败（token 过期/无效）
           if (event.code === 4001) {
-            console.warn('WebSocket authentication failed, logging out');
+            this.warn('WebSocket authentication failed, logging out');
             this.clearLoginState();
             this.state.isAuthenticated = false;
             this.createWidget();
@@ -1415,10 +1494,10 @@
             return;
           }
           // 尝试重连
-          setTimeout(() => this.connectWebSocket(), 5000);
+          this.state.wsReconnectTimer = setTimeout(() => this.connectWebSocket(), 5000);
         };
       } catch (error) {
-        console.error('Failed to connect WebSocket:', error);
+        this.error('Failed to connect WebSocket:', error);
       }
     },
 
@@ -1432,7 +1511,7 @@
           // 检查是否在 60 秒内收到过 pong
           const timeSinceLastPong = Date.now() - this.state.lastPongTime;
           if (timeSinceLastPong > 60000) {
-            console.warn('WebSocket heartbeat timeout, reconnecting...');
+            this.warn('WebSocket heartbeat timeout, reconnecting...');
             this.state.ws.close();
           }
         }
@@ -1485,13 +1564,13 @@
 
       try {
         // 准备AI对话历史（过滤掉空消息，限制数量）
-        console.log('Current messages in state:', this.state.messages);
+        this.log('Current messages in state:', this.state.messages);
         const aiConversationHistory = this.state.messages
           .filter(msg => msg.content && msg.content.trim())
           .slice(-20); // 最多发送最近20条
 
-        console.log('Transferring to human with conversation history:', aiConversationHistory.length, 'messages');
-        console.log('Conversation history content:', JSON.stringify(aiConversationHistory));
+        this.log('Transferring to human with conversation history:', aiConversationHistory.length, 'messages');
+        this.log('Conversation history content:', JSON.stringify(aiConversationHistory));
 
         const response = await this.apiRequest(`${this.config.apiUrl}/chat-service/sessions`, {
           method: 'POST',
@@ -1507,12 +1586,12 @@
 
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({}));
-          console.error('Transfer to human API error:', response.status, errorData);
+          this.error('Transfer to human API error:', response.status, errorData);
           throw new Error(errorData.detail || `HTTP ${response.status}`);
         }
 
         const data = await response.json();
-        console.log('Transfer to human response:', data);
+        this.log('Transfer to human response:', data);
 
         if (data.status === 'connected') {
           this.state.chatMode = 'human';
@@ -1551,7 +1630,7 @@
           this.connectChatWebSocket(data.session_id);
         }
       } catch (error) {
-        console.error('Transfer to human failed:', error);
+        this.error('Transfer to human failed:', error);
         this.addMessage('转接失败，请稍后重试', 'system');
         if (transferBtn) {
           transferBtn.disabled = false;
@@ -1564,7 +1643,7 @@
     connectChatWebSocket(sessionId) {
       // 如果已有连接且处于 OPEN 或 CONNECTING 状态，不再重复连接
       if (this.state.chatWs && (this.state.chatWs.readyState === WebSocket.OPEN || this.state.chatWs.readyState === WebSocket.CONNECTING)) {
-        console.log('Chat WebSocket already connected or connecting, skipping');
+        this.log('Chat WebSocket already connected or connecting, skipping');
         return;
       }
 
@@ -1580,7 +1659,7 @@
         baseUrl = baseUrl + '/chat';
       }
       const wsUrl = `${baseUrl}?token=${this.state.token}`;
-      console.log('Connecting to chat WebSocket:', wsUrl);
+      this.log('Connecting to chat WebSocket:', wsUrl);
       const ws = new WebSocket(wsUrl);
       this.state.chatWs = ws;
 
@@ -1588,7 +1667,7 @@
       let lastPongTime = Date.now();
 
       ws.onopen = () => {
-        console.log('Chat WebSocket connected');
+        this.log('Chat WebSocket connected');
         // 启动心跳
         this.state.chatWsHeartbeatInterval = setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
@@ -1597,7 +1676,7 @@
             // 检查是否在 60 秒内收到过 pong
             const timeSinceLastPong = Date.now() - lastPongTime;
             if (timeSinceLastPong > 60000) {
-              console.warn('Chat WebSocket heartbeat timeout, reconnecting...');
+              this.warn('Chat WebSocket heartbeat timeout, reconnecting...');
               ws.close();
             }
           }
@@ -1613,7 +1692,7 @@
           }));
           // 不在这里加载历史消息，等待服务器确认后再加载
         } else {
-          console.log('No sessionId provided, waiting for session_rejoined from server');
+          this.log('No sessionId provided, waiting for session_rejoined from server');
         }
       };
 
@@ -1622,7 +1701,7 @@
         try {
           data = JSON.parse(event.data);
         } catch (e) {
-          console.error('Invalid Chat WebSocket JSON:', event.data);
+          this.error('Invalid Chat WebSocket JSON:', event.data);
           return;
         }
         // 处理 pong 响应
@@ -1630,16 +1709,16 @@
           lastPongTime = Date.now();
           return;
         }
-        console.log('Widget received WebSocket message:', data);
+        this.log('Widget received WebSocket message:', data);
         this.handleChatWebSocketMessage(data);
       };
 
       ws.onerror = (error) => {
-        console.error('Chat WebSocket error:', error);
+        this.error('Chat WebSocket error:', error);
       };
 
       ws.onclose = (event) => {
-        console.log('Chat WebSocket closed', event.code, event.reason);
+        this.log('Chat WebSocket closed', event.code, event.reason);
         // 清理心跳
         if (this.state.chatWsHeartbeatInterval) {
           clearInterval(this.state.chatWsHeartbeatInterval);
@@ -1654,10 +1733,10 @@
 
     // 处理聊天WebSocket消息
     handleChatWebSocketMessage(data) {
-      console.log('handleChatWebSocketMessage:', data);
+      this.log('handleChatWebSocketMessage:', data);
       switch (data.type) {
         case 'new_message':
-          console.log('Received new_message:', data.message);
+          this.log('Received new_message:', data.message);
           // 根据发送者类型显示不同样式
           // agent 发送的消息显示为 'human' (左侧)，其他显示为 'user' (右侧)
           let msgType;
@@ -1667,7 +1746,7 @@
             senderName = data.message.sender?.name || '客服';
           } else if (data.message.sender_type === 'customer') {
             msgType = 'user';   // 客户自己的消息已经在本地显示，这里跳过
-            console.log('Skipping customer message (already displayed locally)');
+            this.log('Skipping customer message (already displayed locally)');
             return;  // 跳过客户自己发的消息，因为已经在发送时本地显示了
           } else {
             msgType = 'human';  // 系统消息或其他
@@ -1692,11 +1771,11 @@
           break;
         case 'session_rejoined':
           // 重新加入之前的会话
-          console.log('Rejoined session:', data.session_id, 'as', data.role, 'status:', data.status);
+          this.log('Rejoined session:', data.session_id, 'as', data.role, 'status:', data.status);
 
           // 注意：已关闭的会话应该走 session_history，这里处理进行中的会话
           if (data.status === 'closed') {
-            console.warn('Unexpected: session_rejoined with closed status, switching to AI mode');
+            this.warn('Unexpected: session_rejoined with closed status, switching to AI mode');
             this.state.chatMode = 'ai';
             this.state.chatSessionId = null;
             this.state.isWaitingForAgent = false;
@@ -1704,6 +1783,7 @@
             this.state.messages = []; // 清空AI对话历史
             // 清空消息区域并显示提示
             const body = this.shadowRoot.getElementById('ticket-widget-body');
+            this.removeScrollListeners();
             body.innerHTML = '';
             this.addMessage(data.message || '会话已结束，已回到AI模式', 'system');
             // 一次性加载所有历史消息（AI+客服）
@@ -1750,7 +1830,7 @@
           break;
         case 'session_history':
           // 已关闭会话的历史记录 - 回到AI模式
-          console.log('Session history, switching back to AI mode:', data.session_id);
+          this.log('Session history, switching back to AI mode:', data.session_id);
           this.state.chatMode = 'ai'; // 回到AI模式
           this.state.chatSessionId = null; // 不保存会话ID
           this.state.isWaitingForAgent = false;
@@ -1759,6 +1839,7 @@
 
           // 添加历史记录提示（注意：在加载历史之前添加，这样历史消息会显示在提示下方）
           const body = this.shadowRoot.getElementById('ticket-widget-body');
+          this.removeScrollListeners();
           body.innerHTML = ''; // 先清空
           this.addMessage('━━━━━━━━━━━━━━━━━━━━', 'system');
           this.addMessage(data.message || '会话已结束，以下是历史记录', 'system');
@@ -1814,7 +1895,7 @@
           }
           break;
         default:
-          console.log('Unknown message type:', data.type);
+          this.log('Unknown message type:', data.type);
       }
     }
   };

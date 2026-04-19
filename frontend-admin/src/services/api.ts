@@ -3,6 +3,9 @@ import { useAuthStore } from '../stores/authStore'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
+// 全局跳转锁，防止并发 401 时重复跳转
+let isRedirecting = false
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
@@ -59,15 +62,20 @@ api.interceptors.response.use(
           return api(originalRequest)
         } catch (refreshError) {
           // 刷新失败，清除登录状态
-          useAuthStore.getState().logout()
-          window.location.href = '/login'
+          if (!isRedirecting) {
+            isRedirecting = true
+            useAuthStore.getState().logout()
+            window.location.href = '/login'
+          }
           return Promise.reject(refreshError)
         }
       } else {
         // 没有 refresh token，直接跳转到登录页
-        console.error('No refresh token, redirecting to login')
-        useAuthStore.getState().logout()
-        window.location.href = '/login'
+        if (!isRedirecting) {
+          isRedirecting = true
+          useAuthStore.getState().logout()
+          window.location.href = '/login'
+        }
       }
     }
 

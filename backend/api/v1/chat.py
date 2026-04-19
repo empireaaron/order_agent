@@ -1,6 +1,7 @@
 """
 聊天 API 路由 - 调用智能体处理用户消息
 """
+import asyncio
 import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, ConfigDict
@@ -27,7 +28,7 @@ router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
 @router.post("/")
-def chat_with_agent(
+async def chat_with_agent(
     message: ChatMessageRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -85,8 +86,8 @@ def chat_with_agent(
     }
 
     try:
-        # 3. 执行智能体图
-        result = get_ticket_bot_graph().invoke(initial_state)
+        # 3. 执行智能体图（在线程池中运行，避免阻塞事件循环）
+        result = await asyncio.to_thread(get_ticket_bot_graph().invoke, initial_state)
 
         response_text = result.get("response", "处理完成")
 

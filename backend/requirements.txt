@@ -55,3 +55,5 @@ tenacity
 # Optional: distributed short-term memory (Redis backend)
 # Cache & Storage (Optional)
 redis  # 用于分布式对话记忆存储，可选依赖
+
+scikit-learn

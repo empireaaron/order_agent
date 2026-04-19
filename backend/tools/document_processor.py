@@ -1,6 +1,7 @@
 """
 文档处理工具 - 提取内容、分块、向量化、存入 Milvus
 """
+import asyncio
 import logging
 import os
 import io
@@ -192,6 +193,19 @@ def generate_embeddings(texts: List[str]) -> List[List[float]]:
             logger.error("Embedding generation failed for batch %s-%s: %s", i, i + len(batch), e)
             raise RuntimeError(f"Failed to generate embeddings for batch {i}-{i + len(batch)}: {e}") from e
     return all_vectors
+
+
+async def async_generate_embeddings(texts: List[str]) -> List[List[float]]:
+    """
+    异步生成文本的向量嵌入（使用 asyncio.to_thread 包装同步调用）
+
+    Args:
+        texts: 文本列表
+
+    Returns:
+        向量列表
+    """
+    return await asyncio.to_thread(generate_embeddings, texts)
 
 
 def process_document(doc_id: str, file_path: str, file_type: str, collection_name: str) -> Dict:

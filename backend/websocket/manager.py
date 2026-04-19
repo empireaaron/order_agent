@@ -50,13 +50,17 @@ class ConnectionManager:
         """发送个人消息给该用户的所有连接"""
         async with self._lock:
             connections = list(self.active_connections.get(user_id, []))
+        disconnected = []
         for websocket in connections:
             try:
                 await websocket.send_json(message)
                 metrics.record_ws_message(sent=True)
             except Exception as e:
                 logger.error(f"Error sending to user {user_id}: {e}")
-                await self.disconnect(user_id, websocket)
+                disconnected.append(websocket)
+        # 发送循环结束后统一清理，避免在循环中修改连接列表或重入锁
+        for websocket in disconnected:
+            await self.disconnect(user_id, websocket)
 
     async def broadcast(self, message: dict):
         """广播消息给所有连接"""
@@ -66,12 +70,16 @@ class ConnectionManager:
                 for user_id, conns in self.active_connections.items()
                 for ws in conns
             ]
+        disconnected = []
         for user_id, websocket in all_connections:
             try:
                 await websocket.send_json(message)
             except Exception as e:
                 logger.error(f"Error broadcasting to user {user_id}: {e}")
-                await self.disconnect(user_id, websocket)
+                disconnected.append((user_id, websocket))
+        # 发送循环结束后统一清理
+        for user_id, websocket in disconnected:
+            await self.disconnect(user_id, websocket)
 
     def add_to_group(self, group_name: str, user_id: str):
         """将用户添加到组"""

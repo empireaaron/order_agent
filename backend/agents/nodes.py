@@ -15,6 +15,7 @@ from models import User, Ticket
 from agents.state import AgentState
 from utils.metrics import metrics
 from sqlalchemy import func
+from sqlalchemy.exc import SQLAlchemyError
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,15 @@ def create_ticket_node(state: AgentState) -> AgentState:
                 },
                 "response": f"✅ 工单创建成功！\n\n工单编号：{ticket.ticket_no}\n标题：{ticket.title}\n优先级：{ticket.priority}\n分类：{ticket.category}\n\n我们将尽快处理您的问题，您可以通过工单编号查询处理进度。"
             }
+    except (SQLAlchemyError, ValueError, RuntimeError) as e:
+        logger.exception("创建工单失败: %s", e)
+        return {
+            **state,
+            "response": f"创建工单失败：{str(e)}",
+            "error": str(e)
+        }
     except Exception as e:
+        logger.exception("创建工单时发生未预期错误")
         return {
             **state,
             "response": f"创建工单失败：{str(e)}",
@@ -161,6 +170,13 @@ def query_ticket_node(state: AgentState) -> AgentState:
 
     try:
         with get_db_context() as db:
+            from models import TicketMessage
+            # 预计算消息数子查询，避免 N+1
+            message_count_subq = db.query(
+                TicketMessage.ticket_id,
+                func.count(TicketMessage.id).label("msg_count")
+            ).group_by(TicketMessage.ticket_id).subquery()
+
             # 格式化状态映射
             status_map = {
                 "open": "待处理",
@@ -172,18 +188,19 @@ def query_ticket_node(state: AgentState) -> AgentState:
 
             # 如果有工单号，查询单个工单
             if ticket_no:
-                ticket = db.query(Ticket).filter(Ticket.ticket_no == ticket_no).first()
-                if not ticket:
+                ticket_result = db.query(
+                    Ticket, func.coalesce(message_count_subq.c.msg_count, 0)
+                ).outerjoin(
+                    message_count_subq, Ticket.id == message_count_subq.c.ticket_id
+                ).filter(Ticket.ticket_no == ticket_no).first()
+
+                if not ticket_result:
                     return {
                         **state,
                         "response": f"未找到工单 {ticket_no}。请检查工单编号是否正确。"
                     }
 
-                from models import TicketMessage
-                message_count = db.query(TicketMessage).filter(
-                    TicketMessage.ticket_id == ticket.id
-                ).count()
-
+                ticket, message_count = ticket_result
                 priority_map = {"low": "低", "normal": "普通", "high": "高", "urgent": "紧急"}
 
                 response_text = f"""📋 工单详情
@@ -220,25 +237,26 @@ def query_ticket_node(state: AgentState) -> AgentState:
                     "response": "请先登录后查询工单。"
                 }
 
-            # 查询该用户的所有工单
-            tickets = db.query(Ticket).filter(
+            # 查询该用户的所有工单（带消息数）
+            tickets_result = db.query(
+                Ticket, func.coalesce(message_count_subq.c.msg_count, 0)
+            ).outerjoin(
+                message_count_subq, Ticket.id == message_count_subq.c.ticket_id
+            ).filter(
                 Ticket.customer_id == customer_id
             ).order_by(Ticket.created_at.desc()).all()
 
-            if not tickets:
+            if not tickets_result:
                 return {
                     **state,
                     "response": "您还没有创建任何工单。发送您遇到的问题，我可以帮您创建工单。"
                 }
 
+            tickets = [t for t, _ in tickets_result]
+
             # 如果只查询最新一个（不是查询所有）
             if not is_query_all:
-                ticket = tickets[0]
-                from models import TicketMessage
-                message_count = db.query(TicketMessage).filter(
-                    TicketMessage.ticket_id == ticket.id
-                ).count()
-
+                ticket, message_count = tickets_result[0]
                 priority_map = {"low": "低", "normal": "普通", "high": "高", "urgent": "紧急"}
 
                 response_text = f"""📋 最新工单详情
@@ -306,7 +324,15 @@ def query_ticket_node(state: AgentState) -> AgentState:
                 "response": response_text
             }
 
+    except (SQLAlchemyError, ValueError, RuntimeError) as e:
+        logger.exception("查询工单失败: %s", e)
+        return {
+            **state,
+            "response": f"查询工单失败：{str(e)}",
+            "error": str(e)
+        }
     except Exception as e:
+        logger.exception("查询工单时发生未预期错误")
         return {
             **state,
             "response": f"查询工单失败：{str(e)}",
@@ -481,11 +507,19 @@ def query_knowledge_node(state: AgentState) -> AgentState:
                     "response": response.content + "\n\n💡 提示：如需进一步帮助，您可以回复「创建工单」来提交问题给人工客服。"
                 }
 
-    except Exception as e:
-        logger.error(f"Knowledge base query failed: {e}", exc_info=True)
+    except (SQLAlchemyError, ValueError, RuntimeError) as e:
+        logger.exception("Knowledge base query failed: %s", e)
         return {
             **state,
             "knowledge_results": [],  # 异常时设置为空列表
+            "response": f"处理您的问题时出错：{str(e)}。建议创建工单以便人工处理。",
+            "error": str(e)
+        }
+    except Exception as e:
+        logger.exception("Knowledge base query failed with unexpected error")
+        return {
+            **state,
+            "knowledge_results": [],
             "response": f"处理您的问题时出错：{str(e)}。建议创建工单以便人工处理。",
             "error": str(e)
         }
@@ -711,8 +745,15 @@ def process_ticket_node(state: AgentState) -> AgentState:
                     "response": f"您可以对工单 {ticket_no} 进行以下操作：\n• 催促处理 - 提升优先级\n• 补充信息 - 添加备注\n• 取消工单 - 取消未完成的工单\n• 确认解决 - 关闭已解决的工单\n• 重新打开 - 重新处理已关闭的工单\n\n请告诉我您想做什么？"
                 }
 
+    except (SQLAlchemyError, ValueError, RuntimeError) as e:
+        logger.exception("Ticket processing failed: %s", e)
+        return {
+            **state,
+            "response": f"处理工单时出错：{str(e)}。请稍后重试或联系人工客服。",
+            "error": str(e)
+        }
     except Exception as e:
-        logger.error(f"Ticket processing failed: {e}", exc_info=True)
+        logger.exception("Ticket processing failed with unexpected error")
         return {
             **state,
             "response": f"处理工单时出错：{str(e)}。请稍后重试或联系人工客服。",
@@ -813,7 +854,15 @@ def summary_node(state: AgentState) -> AgentState:
                 **state,
                 "response": response
             }
+    except (SQLAlchemyError, ValueError, RuntimeError) as e:
+        logger.exception("查询统计信息失败: %s", e)
+        return {
+            **state,
+            "response": f"查询统计信息失败：{str(e)}",
+            "error": str(e)
+        }
     except Exception as e:
+        logger.exception("查询统计信息时发生未预期错误")
         return {
             **state,
             "response": f"查询统计信息失败：{str(e)}",
@@ -886,7 +935,8 @@ def general_node(state: AgentState) -> AgentState:
         try:
             chain = prompt | settings.llm
             response = chain.invoke({"input": user_input, "history": conversation_history})
-        except Exception as e:
+        except Exception:
+            logger.exception("LLM 调用失败（带历史对话）")
             response = type('obj', (object,), {'content': f"您好！有什么可以帮您的吗？（历史对话加载失败）"})()
     else:
         # 没有历史对话，使用简化prompt
@@ -904,7 +954,8 @@ def general_node(state: AgentState) -> AgentState:
         try:
             chain = prompt | settings.llm
             response = chain.invoke({"input": user_input})
-        except Exception as e:
+        except Exception:
+            logger.exception("LLM 调用失败（无历史对话）")
             return {
                 **state,
                 "response": f"您好！我是您的智能客服助手。\n\n我可以帮您：\n• 📋 创建新工单 - 描述您遇到的问题\n• 🔍 查询工单 - 提供工单编号查询进度\n• 📊 查看统计 - 了解您的工单概况\n\n请问有什么可以帮您的吗？"

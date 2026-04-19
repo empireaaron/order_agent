@@ -2,7 +2,7 @@
 工单 API 路由
 """
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, defer
 
 from db.session import get_db
 from auth.middleware import get_current_active_user, ROLE_ADMIN, ROLE_AGENT
@@ -190,7 +190,7 @@ def read_all_tickets(
     if current_user.role.code not in [ROLE_ADMIN, ROLE_AGENT]:
         raise HTTPException(status_code=403, detail="Permission denied")
 
-    query = db.query(TicketModel)
+    query = db.query(TicketModel).options(defer(TicketModel.content))
 
     # 筛选状态
     if status:

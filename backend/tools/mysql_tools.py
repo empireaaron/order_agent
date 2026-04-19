@@ -4,7 +4,7 @@ Mysql 工具函数 - 工单 CRUD
 from typing import List, Dict, Optional
 from uuid import uuid4
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from models import Ticket, TicketMessage, TicketStatusLog, KnowledgeBase, Document
 from utils.timezone import now
@@ -53,8 +53,9 @@ def get_tickets_by_customer(
     skip: int = 0,
     limit: int = 10
 ) -> List[Ticket]:
-    """获取客户的所有工单"""
+    """获取客户的所有工单（延迟加载大字段 content）"""
     return db.query(Ticket)\
+        .options(defer(Ticket.content))\
         .filter(Ticket.customer_id == customer_id)\
         .order_by(Ticket.created_at.desc())\
         .offset(skip)\
@@ -67,8 +68,9 @@ def get_all_tickets(
     skip: int = 0,
     limit: int = 10
 ) -> List[Ticket]:
-    """获取所有工单（管理员）"""
+    """获取所有工单（管理员，延迟加载大字段 content）"""
     return db.query(Ticket)\
+        .options(defer(Ticket.content))\
         .order_by(Ticket.created_at.desc())\
         .offset(skip)\
         .limit(limit)\

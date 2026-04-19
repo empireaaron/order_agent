@@ -113,30 +113,34 @@ class ChatWebSocketManager:
             logger.info(f"Processing session {session_id}, status={session['status']}, role={role}")
             if session["status"] == "closed":
                 # 已关闭的会话：不加入，只通知客户端加载历史
-                await self.send_to_user(user_id, {
+                success = await self.send_to_user(user_id, {
                     "type": "session_history",
                     "session_id": session_id,
                     "role": role,
                     "status": "closed",
                     "message": "会话已结束，以下是历史记录"
                 })
+                if not success:
+                    await self.disconnect(user_id)
                 logger.info(f"Sent session_history for closed session {session_id}")
             else:
                 # 进行中的会话：加入会话
                 await self.join_session(session_id, user_id, role)
 
                 # 通知用户已重新加入会话
-                await self.send_to_user(user_id, {
+                success = await self.send_to_user(user_id, {
                     "type": "session_rejoined",
                     "session_id": session_id,
                     "role": role,
                     "status": session["status"],
                     "message": "已重新连接到会话"
                 })
+                if not success:
+                    await self.disconnect(user_id)
                 logger.info(f"Sent session_rejoined for active session {session_id}")
 
-    async def send_to_user(self, user_id: str, message: dict):
-        """发送消息给指定用户"""
+    async def send_to_user(self, user_id: str, message: dict) -> bool:
+        """发送消息给指定用户，返回是否发送成功"""
         user_id_str = str(user_id)
         async with self._lock:
             websocket = self.user_connections.get(user_id_str)
@@ -145,11 +149,13 @@ class ChatWebSocketManager:
             try:
                 await websocket.send_json(message)
                 logger.debug("message sent to user")
+                return True
             except Exception as e:
                 logger.error(f"Error sending to user: {e}")
-                await self.disconnect(user_id_str)
+                return False
         else:
             logger.debug("user not in connections")
+            return False
 
     async def send_to_session(self, session_id: str, message: dict, exclude_user: str = None):
         """发送消息给会话中的所有用户"""
@@ -162,6 +168,7 @@ class ChatWebSocketManager:
             users = dict(self.session_users.get(session_id_str, {}))
         logger.debug(f"users in session: {len(users)} users")
 
+        disconnected = []
         for role, user_id in users.items():
             user_id_str = str(user_id)
             logger.debug(f"processing role={role}")
@@ -172,19 +179,29 @@ class ChatWebSocketManager:
                 continue
 
             logger.debug("sending message")
-            await self.send_to_user(user_id_str, message)
+            success = await self.send_to_user(user_id_str, message)
+            if not success:
+                disconnected.append(user_id_str)
+
+        # 统一清理失效连接，避免在循环中修改连接列表或重入锁
+        for user_id in disconnected:
+            await self.disconnect(user_id)
 
     async def broadcast_all(self, message: dict, exclude_user: str = None):
         """广播消息给所有在线用户"""
         async with self._lock:
             connections = list(self.user_connections.items())
+        disconnected = []
         for user_id, websocket in connections:
             if user_id != exclude_user:
                 try:
                     await websocket.send_json(message)
                 except Exception as e:
                     logger.error(f"Error broadcasting to user: {e}")
-                    await self.disconnect(user_id)
+                    disconnected.append(user_id)
+        # 统一清理失效连接
+        for user_id in disconnected:
+            await self.disconnect(user_id)
 
     async def broadcast_to_agents(self, message: dict, exclude_user: str = None):
         """广播消息给所有在线客服"""
@@ -200,6 +217,7 @@ class ChatWebSocketManager:
         agent_ids = await asyncio.to_thread(_fetch_online_agents)
         logger.debug(f"Found {len(agent_ids)} online agents, {len(self.user_connections)} connections")
 
+        disconnected = []
         for agent_id in agent_ids:
             if agent_id == exclude_user:
                 continue
@@ -211,7 +229,10 @@ class ChatWebSocketManager:
                     logger.debug("Broadcasted to agent")
             except Exception as e:
                 logger.error(f"Error broadcasting to agent: {e}")
-                await self.disconnect(agent_id)
+                disconnected.append(agent_id)
+        # 统一清理失效连接
+        for agent_id in disconnected:
+            await self.disconnect(agent_id)
 
     async def join_session(self, session_id: str, user_id: str, role: str):
         """用户加入会话"""
@@ -361,7 +382,9 @@ class ChatWebSocketManager:
 
         elif msg_type == "ping":
             # 心跳响应
-            await self.send_to_user(user_id_str, {"type": "pong"})
+            success = await self.send_to_user(user_id_str, {"type": "pong"})
+            if not success:
+                await self.disconnect(user_id_str)
 
 
 # 全局聊天WebSocket管理器
