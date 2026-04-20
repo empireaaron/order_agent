@@ -144,7 +144,7 @@ npm install
 npm run dev
 ```
 
-前端服务：http://localhost:5173
+前端服务：http://localhost:3000
 
 ### 6. 测试 Widget
 
@@ -357,7 +357,7 @@ docker-compose down
 | 服务 | 端口 | 说明 |
 |------|------|------|
 | 后端 API | 8001 | FastAPI 服务 |
-| 前端开发 | 5173 | Vite 开发服务器 |
+| 前端开发 | 3000 | Vite 开发服务器 |
 | Widget 演示 | 8080 | Python HTTP 服务器 |
 | MySQL | 3306 | 数据库 |
 | Milvus | 19530 | 向量数据库 |
